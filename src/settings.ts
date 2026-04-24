@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import DailyArticlePlugin from "./main";
 
 export const MODEL_OPTIONS: Record<string, string> = {
@@ -155,5 +155,39 @@ export class DailyArticleSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+
+    // Update section
+    containerEl.createEl("h3", { text: "💾 更新" });
+
+    new Setting(containerEl)
+      .setName("检查更新")
+      .setDesc(`当前版本: v${this.plugin.manifest.version || "0.0.0"}`)
+      .addButton((button) => {
+        button
+          .setButtonText("检查更新")
+          .onClick(async () => {
+            button.setDisabled(true);
+            button.setButtonText("检查中...");
+            try {
+              const result = await this.plugin.checkForUpdates();
+              if (result === null) {
+                new Notice("❌ 检查更新失败，请检查网络连接");
+              } else if (result.hasUpdate) {
+                new Notice(`✅ 发现新版本 v${result.latestVersion}，正在下载...`);
+                const success = await this.plugin.performUpdate(result.latestTag);
+                if (success) {
+                  new Notice("✅ 更新完成！请重启 Obsidian 以应用更新");
+                } else {
+                  new Notice("❌ 更新失败，请稍后重试");
+                }
+              } else {
+                new Notice(`✅ 已是最新版本 v${result.latestVersion}`);
+              }
+            } finally {
+              button.setDisabled(false);
+              button.setButtonText("检查更新");
+            }
+          });
+      });
   }
 }

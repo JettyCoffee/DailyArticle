@@ -26,7 +26,7 @@ __export(main_exports, {
   default: () => DailyArticlePlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -112,6 +112,32 @@ var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
+    containerEl.createEl("h3", { text: "\u{1F4BE} \u66F4\u65B0" });
+    new import_obsidian.Setting(containerEl).setName("\u68C0\u67E5\u66F4\u65B0").setDesc(`\u5F53\u524D\u7248\u672C: v${this.plugin.manifest.version || "0.0.0"}`).addButton((button) => {
+      button.setButtonText("\u68C0\u67E5\u66F4\u65B0").onClick(async () => {
+        button.setDisabled(true);
+        button.setButtonText("\u68C0\u67E5\u4E2D...");
+        try {
+          const result = await this.plugin.checkForUpdates();
+          if (result === null) {
+            new import_obsidian.Notice("\u274C \u68C0\u67E5\u66F4\u65B0\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5");
+          } else if (result.hasUpdate) {
+            new import_obsidian.Notice(`\u2705 \u53D1\u73B0\u65B0\u7248\u672C v${result.latestVersion}\uFF0C\u6B63\u5728\u4E0B\u8F7D...`);
+            const success = await this.plugin.performUpdate(result.latestTag);
+            if (success) {
+              new import_obsidian.Notice("\u2705 \u66F4\u65B0\u5B8C\u6210\uFF01\u8BF7\u91CD\u542F Obsidian \u4EE5\u5E94\u7528\u66F4\u65B0");
+            } else {
+              new import_obsidian.Notice("\u274C \u66F4\u65B0\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
+            }
+          } else {
+            new import_obsidian.Notice(`\u2705 \u5DF2\u662F\u6700\u65B0\u7248\u672C v${result.latestVersion}`);
+          }
+        } finally {
+          button.setDisabled(false);
+          button.setButtonText("\u68C0\u67E5\u66F4\u65B0");
+        }
+      });
+    });
   }
 };
 
@@ -184,20 +210,27 @@ async function queryArxiv(query, maxResults) {
   const xml = await response.text();
   return parseAtomXml(xml);
 }
-async function fetchPapersByQuery(queryString, maxResults) {
-  const now = new Date();
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
-  const dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
+async function fetchPapersByQuery(queryString, maxResults, date) {
+  let dateRange;
+  if (date) {
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0);
+    const end = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0);
+    dateRange = `submittedDate:[${formatDate(start)} TO ${formatDate(end)}]`;
+  } else {
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
+    dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
+  }
   const query = `(${queryString}) AND ${dateRange}`;
   const result = await queryArxiv(query, maxResults);
   return result.entries;
 }
-async function fetchPapersByQueries(queries, maxResultsPerQuery) {
+async function fetchPapersByQueries(queries, maxResultsPerQuery, date) {
   const seen = /* @__PURE__ */ new Set();
   const allPapers = [];
   for (const query of queries) {
     try {
-      const papers = await fetchPapersByQuery(query, maxResultsPerQuery);
+      const papers = await fetchPapersByQuery(query, maxResultsPerQuery, date);
       for (const paper of papers) {
         if (!seen.has(paper.id)) {
           seen.add(paper.id);
@@ -337,12 +370,12 @@ ${paperList}`;
 }
 
 // src/output.ts
-function getDateString() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function getDateString(date) {
+  const d = date || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 function getTimeString() {
   const now = new Date();
@@ -362,9 +395,9 @@ function getRankEmoji(rank) {
       return `#${rank}`;
   }
 }
-function generateMarkdown(papers, summaries, totalFetched, language) {
+function generateMarkdown(papers, summaries, totalFetched, language, date) {
   const isZh = language === "zh-CN";
-  const dateStr = getDateString();
+  const dateStr = getDateString(date);
   if (isZh) {
     return generateChineseMarkdown(papers, summaries, totalFetched, dateStr);
   }
@@ -478,20 +511,167 @@ function generateEnglishMarkdown(papers, summaries, totalFetched, dateStr) {
   lines.push("");
   return lines.join("\n");
 }
-function getOutputFilename() {
-  return `Arxiv-\u65E5\u62A5-${getDateString()}.md`;
+function getOutputFilename(date) {
+  return `Arxiv-\u65E5\u62A5-${getDateString(date)}.md`;
 }
 
+// src/view.ts
+var import_obsidian2 = require("obsidian");
+var VIEW_TYPE = "daily-article-sidebar";
+var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "DailyArticle";
+  }
+  getIcon() {
+    return "search";
+  }
+  async onOpen() {
+    this.render();
+  }
+  getDirections() {
+    return this.plugin.settings.researchDirections.split("\n").map((d) => d.trim()).filter((d) => d.length > 0);
+  }
+  render() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("h2", { text: "DailyArticle" });
+    containerEl.createEl("h3", { text: "\u{1F50D} \u641C\u7D22\u8BBA\u6587" });
+    new import_obsidian2.Setting(containerEl).setName("\u65E5\u671F").addText((text) => {
+      text.inputEl.type = "date";
+      text.setValue(new Date().toISOString().slice(0, 10));
+      this.dateInput = text.inputEl;
+    });
+    const directions = this.getDirections();
+    if (directions.length > 0) {
+      new import_obsidian2.Setting(containerEl).setName("\u7814\u7A76\u65B9\u5411").addDropdown((dropdown) => {
+        dropdown.addOption("all", "\u6240\u6709\u65B9\u5411");
+        for (const dir of directions) {
+          dropdown.addOption(dir, dir);
+        }
+        dropdown.setValue("all");
+        this.directionDropdown = dropdown.selectEl;
+      });
+    }
+    new import_obsidian2.Setting(containerEl).addButton((button) => {
+      button.setButtonText("\u641C\u7D22\u5E76\u751F\u6210\u62A5\u544A").setCta().onClick(() => this.handleSearch());
+    });
+    this.statusEl = containerEl.createDiv();
+    this.statusEl.setText("\u5C31\u7EEA");
+    containerEl.createEl("hr");
+    containerEl.createEl("h3", { text: "\u2699\uFE0F \u5FEB\u901F\u8BBE\u7F6E" });
+    new import_obsidian2.Setting(containerEl).setName("DeepSeek \u6A21\u578B").addDropdown((dropdown) => {
+      for (const [value, label] of Object.entries(MODEL_OPTIONS)) {
+        dropdown.addOption(value, label);
+      }
+      dropdown.setValue(this.plugin.settings.model);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.model = value;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian2.Setting(containerEl).setName("\u6BCF\u65B9\u5411\u6700\u5927\u83B7\u53D6\u6570").addText((text) => {
+      text.setPlaceholder("30").setValue(String(this.plugin.settings.maxResultsPerDirection)).onChange(async (value) => {
+        const num = parseInt(value);
+        if (!isNaN(num) && num > 0) {
+          this.plugin.settings.maxResultsPerDirection = num;
+          await this.plugin.saveSettings();
+        }
+      });
+    });
+    new import_obsidian2.Setting(containerEl).setName("\u7CBE\u9009\u6570\u91CF").addText((text) => {
+      text.setPlaceholder("10").setValue(String(this.plugin.settings.topN)).onChange(async (value) => {
+        const num = parseInt(value);
+        if (!isNaN(num) && num > 0) {
+          this.plugin.settings.topN = num;
+          await this.plugin.saveSettings();
+        }
+      });
+    });
+    new import_obsidian2.Setting(containerEl).setName("\u8F93\u51FA\u8BED\u8A00").addDropdown((dropdown) => {
+      dropdown.addOption("zh-CN", "\u4E2D\u6587").addOption("en", "English").setValue(this.plugin.settings.outputLanguage).onChange(async (value) => {
+        this.plugin.settings.outputLanguage = value;
+        await this.plugin.saveSettings();
+      });
+    });
+    containerEl.createEl("hr");
+    containerEl.createEl("h3", { text: "\u{1F4BE} \u66F4\u65B0" });
+    const versionEl = containerEl.createEl("p");
+    const currentVersion = this.plugin.manifest.version || "0.0.0";
+    versionEl.setText(`\u5F53\u524D\u7248\u672C: v${currentVersion}`);
+    new import_obsidian2.Setting(containerEl).addButton((button) => {
+      button.setButtonText("\u68C0\u67E5\u66F4\u65B0").onClick(async () => {
+        button.setDisabled(true);
+        button.setButtonText("\u68C0\u67E5\u4E2D...");
+        try {
+          const result = await this.plugin.checkForUpdates();
+          if (result === null) {
+            new import_obsidian2.Notice("\u274C \u68C0\u67E5\u66F4\u65B0\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5");
+          } else if (result.hasUpdate) {
+            new import_obsidian2.Notice(`\u2705 \u53D1\u73B0\u65B0\u7248\u672C v${result.latestVersion}\uFF0C\u6B63\u5728\u4E0B\u8F7D...`);
+            const success = await this.plugin.performUpdate(result.latestTag);
+            if (success) {
+              new import_obsidian2.Notice("\u2705 \u66F4\u65B0\u5B8C\u6210\uFF01\u8BF7\u91CD\u542F Obsidian \u4EE5\u5E94\u7528\u66F4\u65B0");
+              versionEl.setText(
+                `\u5F53\u524D\u7248\u672C: v${currentVersion} \u2192 v${result.latestVersion}\uFF08\u5DF2\u4E0B\u8F7D\uFF0C\u91CD\u542F\u751F\u6548\uFF09`
+              );
+            } else {
+              new import_obsidian2.Notice("\u274C \u66F4\u65B0\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
+            }
+          } else {
+            new import_obsidian2.Notice(`\u2705 \u5DF2\u662F\u6700\u65B0\u7248\u672C v${result.latestVersion}`);
+          }
+        } finally {
+          button.setDisabled(false);
+          button.setButtonText("\u68C0\u67E5\u66F4\u65B0");
+        }
+      });
+    });
+  }
+  async handleSearch() {
+    var _a, _b;
+    const dateStr = (_a = this.dateInput) == null ? void 0 : _a.value;
+    const selectedDirection = (_b = this.directionDropdown) == null ? void 0 : _b.value;
+    if (!dateStr) {
+      new import_obsidian2.Notice("\u274C \u8BF7\u9009\u62E9\u65E5\u671F");
+      return;
+    }
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const targetDate = new Date(year, month - 1, day);
+    let directions;
+    if (selectedDirection && selectedDirection !== "all") {
+      directions = [selectedDirection];
+    }
+    this.statusEl.setText("\u{1F504} \u6B63\u5728\u641C\u7D22\u8BBA\u6587...");
+    const success = await this.plugin.fetchAndProcess(targetDate, directions);
+    this.statusEl.setText(success ? "\u2705 \u5B8C\u6210" : "\u274C \u64CD\u4F5C\u5931\u8D25");
+  }
+};
+
 // src/main.ts
-var DailyArticlePlugin = class extends import_obsidian2.Plugin {
+var GITHUB_REPO = "JettyCoffee/DailyArticle";
+var DailyArticlePlugin = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.lastFetchDate = "";
+    this.isFetching = false;
   }
   async onload() {
     try {
       await this.loadSettings();
       this.addSettingTab(new DailyArticleSettingTab(this.app, this));
+      this.registerView(VIEW_TYPE, (leaf) => {
+        return new DailyArticleSidebarView(leaf, this);
+      });
+      this.addRibbonIcon("search", "DailyArticle \u63A7\u5236\u9762\u677F", () => {
+        this.activateView();
+      });
       this.addCommand({
         id: "fetch-today-papers",
         name: "\u7ACB\u5373\u83B7\u53D6\u4ECA\u65E5\u8BBA\u6587",
@@ -506,6 +686,13 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
           this.testConnection();
         }
       });
+      this.addCommand({
+        id: "open-daily-article-sidebar",
+        name: "\u6253\u5F00 DailyArticle \u63A7\u5236\u9762\u677F",
+        callback: () => {
+          this.activateView();
+        }
+      });
       const intervalId = window.setInterval(() => {
         this.checkScheduledFetch();
       }, 6e4);
@@ -517,6 +704,20 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
   }
   onunload() {
     console.log("DailyArticle plugin unloaded");
+  }
+  async activateView() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    if (leaves.length > 0) {
+      this.app.workspace.revealLeaf(leaves[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf)
+      return;
+    await leaf.setViewState({
+      type: VIEW_TYPE,
+      active: true
+    });
   }
   async loadSettings() {
     this.settings = Object.assign(
@@ -533,10 +734,10 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
   }
   async testConnection() {
     if (!this.settings.deepseekApiKey) {
-      new import_obsidian2.Notice("\u274C \u8BF7\u5148\u586B\u5199 DeepSeek API Key");
+      new import_obsidian3.Notice("\u274C \u8BF7\u5148\u586B\u5199 DeepSeek API Key");
       return;
     }
-    new import_obsidian2.Notice("\u{1F504} \u6B63\u5728\u6D4B\u8BD5 DeepSeek API \u8FDE\u63A5...");
+    new import_obsidian3.Notice("\u{1F504} \u6B63\u5728\u6D4B\u8BD5 DeepSeek API \u8FDE\u63A5...");
     try {
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
@@ -553,13 +754,13 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
         })
       });
       if (response.ok) {
-        new import_obsidian2.Notice("\u2705 DeepSeek API \u8FDE\u63A5\u6210\u529F\uFF01");
+        new import_obsidian3.Notice("\u2705 DeepSeek API \u8FDE\u63A5\u6210\u529F\uFF01");
       } else {
         const text = await response.text();
-        new import_obsidian2.Notice(`\u274C API \u8FDE\u63A5\u5931\u8D25: ${response.status} ${text.slice(0, 100)}`);
+        new import_obsidian3.Notice(`\u274C API \u8FDE\u63A5\u5931\u8D25: ${response.status} ${text.slice(0, 100)}`);
       }
     } catch (e) {
-      new import_obsidian2.Notice(`\u274C \u7F51\u7EDC\u9519\u8BEF: ${e.message}`);
+      new import_obsidian3.Notice(`\u274C \u7F51\u7EDC\u9519\u8BEF: ${e.message}`);
     }
   }
   checkScheduledFetch() {
@@ -575,17 +776,28 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
       this.fetchAndProcess();
     }
   }
-  async fetchAndProcess() {
+  /**
+   * Fetch papers and generate a report.
+   * @param fetchDate - optional: search papers from this specific date (default: last 24h)
+   * @param specificDirections - optional: only search these specific directions (default: all)
+   * @returns true if the report was generated successfully
+   */
+  async fetchAndProcess(fetchDate, specificDirections) {
+    if (this.isFetching) {
+      new import_obsidian3.Notice("\u23F3 \u6B63\u5728\u5904\u7406\u4E2D\uFF0C\u8BF7\u7A0D\u5019...");
+      return false;
+    }
     if (!this.settings.deepseekApiKey) {
-      new import_obsidian2.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 DeepSeek API Key");
-      return;
+      new import_obsidian3.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 DeepSeek API Key");
+      return false;
     }
-    const directions = this.parseResearchDirections();
+    const directions = specificDirections != null ? specificDirections : this.parseResearchDirections();
     if (directions.length === 0) {
-      new import_obsidian2.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199\u7814\u7A76\u65B9\u5411\uFF08\u5982 Agent\u3001RL\u3001GraphRAG\uFF09");
-      return;
+      new import_obsidian3.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199\u7814\u7A76\u65B9\u5411\uFF08\u5982 Agent\u3001RL\u3001GraphRAG\uFF09");
+      return false;
     }
-    new import_obsidian2.Notice("\u{1F916} Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...");
+    this.isFetching = true;
+    new import_obsidian3.Notice("\u{1F916} Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...");
     try {
       let queries;
       try {
@@ -594,21 +806,22 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
           this.settings.model,
           directions
         );
-        new import_obsidian2.Notice(`\u{1F50D} Agent \u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
+        new import_obsidian3.Notice(`\u{1F50D} Agent \u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
       } catch (e) {
         console.warn("Query expansion failed, using raw directions:", e);
         queries = directions.map((d) => `all:${d}`);
-        new import_obsidian2.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
+        new import_obsidian3.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
       }
       const allPapers = await fetchPapersByQueries(
         queries,
-        this.settings.maxResultsPerDirection
+        this.settings.maxResultsPerDirection,
+        fetchDate
       );
       if (allPapers.length === 0) {
-        new import_obsidian2.Notice("\u26A0\uFE0F \u4ECA\u65E5 Arxiv \u6682\u65E0\u76F8\u5173\u8BBA\u6587");
-        return;
+        new import_obsidian3.Notice("\u26A0\uFE0F \u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
+        return false;
       }
-      new import_obsidian2.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
+      new import_obsidian3.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
       const scoredPapers = await scorePapers(
         this.settings.deepseekApiKey,
         this.settings.model,
@@ -627,7 +840,7 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
           topPapers.push(paper);
         }
       }
-      new import_obsidian2.Notice(`\u{1F4DD} \u6B63\u5728\u751F\u6210 Top ${topPapers.length} \u8BBA\u6587\u6458\u8981...`);
+      new import_obsidian3.Notice(`\u{1F4DD} \u6B63\u5728\u751F\u6210 Top ${topPapers.length} \u8BBA\u6587\u6458\u8981...`);
       const summaries = await summarizePapers(
         this.settings.deepseekApiKey,
         this.settings.model,
@@ -647,30 +860,107 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
         topPapers,
         enrichedSummaries,
         allPapers.length,
-        this.settings.outputLanguage
+        this.settings.outputLanguage,
+        fetchDate
       );
-      await this.writeOutputFile(markdown);
-      new import_obsidian2.Notice(
+      await this.writeOutputFile(markdown, fetchDate);
+      new import_obsidian3.Notice(
         `\u2705 \u65E5\u62A5\u5DF2\u751F\u6210\uFF01\u5171 ${allPapers.length} \u7BC7\uFF0C\u7CBE\u9009 Top ${topPapers.length}`
       );
+      return true;
     } catch (e) {
       console.error("DailyArticle fetch error:", e);
-      new import_obsidian2.Notice(`\u274C \u5904\u7406\u5931\u8D25: ${e.message}`);
+      new import_obsidian3.Notice(`\u274C \u5904\u7406\u5931\u8D25: ${e.message}`);
+      return false;
+    } finally {
+      this.isFetching = false;
     }
   }
-  async writeOutputFile(content) {
+  async writeOutputFile(content, date) {
     const folderPath = this.settings.outputFolder;
-    const fileName = getOutputFilename();
+    const fileName = getOutputFilename(date);
     const filePath = `${folderPath}/${fileName}`;
     const folder = this.app.vault.getAbstractFileByPath(folderPath);
     if (!folder) {
       await this.app.vault.createFolder(folderPath);
     }
     const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-    if (existingFile instanceof import_obsidian2.TFile) {
+    if (existingFile instanceof import_obsidian3.TFile) {
       await this.app.vault.modify(existingFile, content);
     } else {
       await this.app.vault.create(filePath, content);
+    }
+  }
+  // ---- GitHub Update ----
+  compareVersions(a, b) {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const na = pa[i] || 0;
+      const nb = pb[i] || 0;
+      if (na > nb)
+        return 1;
+      if (na < nb)
+        return -1;
+    }
+    return 0;
+  }
+  /**
+   * Check GitHub releases for a newer version.
+   * @returns update info, or null on network/API error
+   */
+  async checkForUpdates() {
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+      );
+      if (!response.ok) {
+        console.error("GitHub API error:", response.status, response.statusText);
+        return null;
+      }
+      const data = await response.json();
+      const latestTag = data.tag_name || "";
+      const latestVersion = latestTag.replace(/^v/, "");
+      const currentVersion = this.manifest.version || "0.0.0";
+      const hasUpdate = this.compareVersions(latestVersion, currentVersion) > 0;
+      return { hasUpdate, latestVersion, latestTag };
+    } catch (e) {
+      console.error("Failed to check for updates:", e);
+      return null;
+    }
+  }
+  /**
+   * Download updated plugin files from GitHub and write them to the plugin directory.
+   * @returns true if update was applied successfully
+   */
+  async performUpdate(tag) {
+    try {
+      const pluginDir = `${this.app.vault.configDir}/plugins/daily-article`;
+      const adapter = this.app.vault.adapter;
+      if (!await adapter.exists(pluginDir)) {
+        await adapter.mkdir(pluginDir);
+      }
+      const files = ["manifest.json", "main.js", "styles.css"];
+      for (const file of files) {
+        const url = `https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/${file}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          if (file === "styles.css")
+            continue;
+          throw new Error(
+            `Failed to download ${file}: ${response.status} ${response.statusText}`
+          );
+        }
+        const content = await response.text();
+        await adapter.write(`${pluginDir}/${file}`, content);
+      }
+      new import_obsidian3.Notice("\u2705 \u66F4\u65B0\u6587\u4EF6\u5DF2\u4E0B\u8F7D\uFF0C\u8BF7\u91CD\u542F Obsidian \u751F\u6548");
+      return true;
+    } catch (e) {
+      console.error("Update failed:", e);
+      new import_obsidian3.Notice(`\u274C \u66F4\u65B0\u5931\u8D25: ${e.message}`);
+      return false;
     }
   }
 };

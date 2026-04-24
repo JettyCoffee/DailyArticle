@@ -7,16 +7,30 @@ import {
 import { fetchPapersByQueries, ArxivPaper } from "./arxiv";
 import { scorePapers, summarizePapers, expandSearchQueries, ScoredPaper, PaperSummary } from "./deepseek";
 import { generateMarkdown, getOutputFilename } from "./output";
+import { DailyArticleSidebarView, VIEW_TYPE } from "./view";
+
+const GITHUB_REPO = "JettyCoffee/DailyArticle";
 
 export default class DailyArticlePlugin extends Plugin {
   settings: DailyArticleSettings;
   private lastFetchDate: string = "";
+  private isFetching = false;
 
   async onload() {
     try {
       await this.loadSettings();
 
       this.addSettingTab(new DailyArticleSettingTab(this.app, this));
+
+      // Register sidebar view
+      this.registerView(VIEW_TYPE, (leaf) => {
+        return new DailyArticleSidebarView(leaf, this);
+      });
+
+      // Ribbon icon to open sidebar
+      this.addRibbonIcon("search", "DailyArticle 控制面板", () => {
+        this.activateView();
+      });
 
       this.addCommand({
         id: "fetch-today-papers",
@@ -34,6 +48,14 @@ export default class DailyArticlePlugin extends Plugin {
         },
       });
 
+      this.addCommand({
+        id: "open-daily-article-sidebar",
+        name: "打开 DailyArticle 控制面板",
+        callback: () => {
+          this.activateView();
+        },
+      });
+
       // Schedule: check every 60 seconds if it's time to fetch
       const intervalId = window.setInterval(() => {
         this.checkScheduledFetch();
@@ -48,6 +70,22 @@ export default class DailyArticlePlugin extends Plugin {
 
   onunload() {
     console.log("DailyArticle plugin unloaded");
+  }
+
+  async activateView() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    if (leaves.length > 0) {
+      this.app.workspace.revealLeaf(leaves[0]);
+      return;
+    }
+
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) return;
+
+    await leaf.setViewState({
+      type: VIEW_TYPE,
+      active: true,
+    });
   }
 
   async loadSettings() {
@@ -125,17 +163,30 @@ export default class DailyArticlePlugin extends Plugin {
     }
   }
 
-  async fetchAndProcess() {
-    if (!this.settings.deepseekApiKey) {
-      new Notice("❌ 请先在设置中填写 DeepSeek API Key");
-      return;
+  /**
+   * Fetch papers and generate a report.
+   * @param fetchDate - optional: search papers from this specific date (default: last 24h)
+   * @param specificDirections - optional: only search these specific directions (default: all)
+   * @returns true if the report was generated successfully
+   */
+  async fetchAndProcess(fetchDate?: Date, specificDirections?: string[]): Promise<boolean> {
+    if (this.isFetching) {
+      new Notice("⏳ 正在处理中，请稍候...");
+      return false;
     }
 
-    const directions = this.parseResearchDirections();
+    if (!this.settings.deepseekApiKey) {
+      new Notice("❌ 请先在设置中填写 DeepSeek API Key");
+      return false;
+    }
+
+    const directions = specificDirections ?? this.parseResearchDirections();
     if (directions.length === 0) {
       new Notice("❌ 请先在设置中填写研究方向（如 Agent、RL、GraphRAG）");
-      return;
+      return false;
     }
+
+    this.isFetching = true;
 
     new Notice("🤖 Agent 正在分析研究方向并生成搜索查询...");
 
@@ -159,12 +210,13 @@ export default class DailyArticlePlugin extends Plugin {
       // Step 2: Fetch papers from Arxiv using the generated queries
       const allPapers = await fetchPapersByQueries(
         queries,
-        this.settings.maxResultsPerDirection
+        this.settings.maxResultsPerDirection,
+        fetchDate
       );
 
       if (allPapers.length === 0) {
-        new Notice("⚠️ 今日 Arxiv 暂无相关论文");
-        return;
+        new Notice("⚠️ 该日期暂无相关论文");
+        return false;
       }
 
       new Notice(`📚 已获取 ${allPapers.length} 篇论文，正在评分...`);
@@ -220,23 +272,29 @@ export default class DailyArticlePlugin extends Plugin {
         topPapers,
         enrichedSummaries,
         allPapers.length,
-        this.settings.outputLanguage
+        this.settings.outputLanguage,
+        fetchDate
       );
 
-      await this.writeOutputFile(markdown);
+      await this.writeOutputFile(markdown, fetchDate);
 
       new Notice(
         `✅ 日报已生成！共 ${allPapers.length} 篇，精选 Top ${topPapers.length}`
       );
+
+      return true;
     } catch (e) {
       console.error("DailyArticle fetch error:", e);
       new Notice(`❌ 处理失败: ${e.message}`);
+      return false;
+    } finally {
+      this.isFetching = false;
     }
   }
 
-  private async writeOutputFile(content: string) {
+  private async writeOutputFile(content: string, date?: Date) {
     const folderPath = this.settings.outputFolder;
-    const fileName = getOutputFilename();
+    const fileName = getOutputFilename(date);
     const filePath = `${folderPath}/${fileName}`;
 
     // Ensure the folder exists
@@ -250,6 +308,94 @@ export default class DailyArticlePlugin extends Plugin {
       await this.app.vault.modify(existingFile, content);
     } else {
       await this.app.vault.create(filePath, content);
+    }
+  }
+
+  // ---- GitHub Update ----
+
+  private compareVersions(a: string, b: string): number {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const na = pa[i] || 0;
+      const nb = pb[i] || 0;
+      if (na > nb) return 1;
+      if (na < nb) return -1;
+    }
+    return 0;
+  }
+
+  /**
+   * Check GitHub releases for a newer version.
+   * @returns update info, or null on network/API error
+   */
+  async checkForUpdates(): Promise<{
+    hasUpdate: boolean;
+    latestVersion: string;
+    latestTag: string;
+  } | null> {
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+      );
+      if (!response.ok) {
+        console.error("GitHub API error:", response.status, response.statusText);
+        return null;
+      }
+      const data = await response.json();
+      const latestTag: string = data.tag_name || "";
+      const latestVersion = latestTag.replace(/^v/, "");
+
+      const currentVersion = this.manifest.version || "0.0.0";
+      const hasUpdate = this.compareVersions(latestVersion, currentVersion) > 0;
+
+      return { hasUpdate, latestVersion, latestTag };
+    } catch (e) {
+      console.error("Failed to check for updates:", e);
+      return null;
+    }
+  }
+
+  /**
+   * Download updated plugin files from GitHub and write them to the plugin directory.
+   * @returns true if update was applied successfully
+   */
+  async performUpdate(tag: string): Promise<boolean> {
+    try {
+      const pluginDir = `${this.app.vault.configDir}/plugins/daily-article`;
+      const adapter = this.app.vault.adapter;
+
+      // Ensure plugin directory exists
+      if (!(await adapter.exists(pluginDir))) {
+        await adapter.mkdir(pluginDir);
+      }
+
+      // Files to download (styles.css is optional)
+      const files = ["manifest.json", "main.js", "styles.css"];
+
+      for (const file of files) {
+        const url = `https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/${file}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          // Skip styles.css if it doesn't exist in the release
+          if (file === "styles.css") continue;
+          throw new Error(
+            `Failed to download ${file}: ${response.status} ${response.statusText}`
+          );
+        }
+
+        const content = await response.text();
+        await adapter.write(`${pluginDir}/${file}`, content);
+      }
+
+      new Notice("✅ 更新文件已下载，请重启 Obsidian 生效");
+      return true;
+    } catch (e) {
+      console.error("Update failed:", e);
+      new Notice(`❌ 更新失败: ${e.message}`);
+      return false;
     }
   }
 }

@@ -1,12 +1,12 @@
 import { ArxivPaper } from "./arxiv";
 import { PaperSummary } from "./deepseek";
 
-function getDateString(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function getDateString(date?: Date): string {
+  const d = date || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function getTimeString(): string {
@@ -36,10 +36,11 @@ export function generateMarkdown(
   papers: ArxivPaper[],
   summaries: PaperSummary[],
   totalFetched: number,
-  language: string
+  language: string,
+  date?: Date
 ): string {
   const isZh = language === "zh-CN";
-  const dateStr = getDateString();
+  const dateStr = getDateString(date);
 
   if (isZh) {
     return generateChineseMarkdown(papers, summaries, totalFetched, dateStr);
@@ -187,6 +188,6 @@ function generateEnglishMarkdown(
 /**
  * Generate a filename for the daily article.
  */
-export function getOutputFilename(): string {
-  return `Arxiv-日报-${getDateString()}.md`;
+export function getOutputFilename(date?: Date): string {
+  return `Arxiv-日报-${getDateString(date)}.md`;
 }
