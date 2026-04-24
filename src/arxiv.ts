@@ -133,18 +133,35 @@ export async function fetchPapersByCategory(
 }
 
 /**
- * Fetch papers for multiple categories and merge/deduplicate by paper ID.
+ * Fetch papers by an Arxiv search query (using all: field to search title + abstract).
  */
-export async function fetchPapersByCategories(
-  categories: string[],
-  maxResultsPerCategory: number
+export async function fetchPapersByQuery(
+  queryString: string,
+  maxResults: number
+): Promise<ArxivPaper[]> {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
+  const query = `(${queryString}) AND ${dateRange}`;
+
+  const result = await queryArxiv(query, maxResults);
+  return result.entries;
+}
+
+/**
+ * Fetch papers for multiple search queries and merge/deduplicate by paper ID.
+ */
+export async function fetchPapersByQueries(
+  queries: string[],
+  maxResultsPerQuery: number
 ): Promise<ArxivPaper[]> {
   const seen = new Set<string>();
   const allPapers: ArxivPaper[] = [];
 
-  for (const category of categories) {
+  for (const query of queries) {
     try {
-      const papers = await fetchPapersByCategory(category, maxResultsPerCategory);
+      const papers = await fetchPapersByQuery(query, maxResultsPerQuery);
       for (const paper of papers) {
         if (!seen.has(paper.id)) {
           seen.add(paper.id);
@@ -152,7 +169,7 @@ export async function fetchPapersByCategories(
         }
       }
     } catch (e) {
-      console.error(`Failed to fetch category ${category}:`, e);
+      console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
     }
   }
 

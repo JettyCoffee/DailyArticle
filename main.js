@@ -39,9 +39,9 @@ var MODEL_OPTIONS = {
 var DEFAULT_SETTINGS = {
   deepseekApiKey: "",
   model: "deepseek-v4-flash",
-  arxivCategories: "cs.AI\ncs.CL\ncs.CV\ncs.LG",
+  researchDirections: "Agent\nReinforcement Learning\nGraphRAG\nLLM",
   fetchTime: "08:00",
-  maxResultsPerCategory: 50,
+  maxResultsPerDirection: 30,
   topN: 10,
   outputFolder: "DailyArticle",
   outputLanguage: "zh-CN"
@@ -70,9 +70,9 @@ var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian.Setting(containerEl).setName("Arxiv \u5206\u7C7B").setDesc("\u6BCF\u884C\u4E00\u4E2A Arxiv \u5206\u7C7B\u6807\u7B7E\uFF0C\u4F8B\u5982 cs.AI\u3001cs.CL\u3001cs.CV\u3001cs.LG").addTextArea(
-      (text) => text.setPlaceholder("cs.AI\ncs.CL\ncs.CV\ncs.LG").setValue(this.plugin.settings.arxivCategories).onChange(async (value) => {
-        this.plugin.settings.arxivCategories = value;
+    new import_obsidian.Setting(containerEl).setName("\u7814\u7A76\u65B9\u5411").setDesc("\u6BCF\u884C\u4E00\u4E2A\u7814\u7A76\u65B9\u5411\uFF0CAgent \u5C06\u81EA\u52A8\u751F\u6210\u641C\u7D22\u67E5\u8BE2\u3002\u4F8B\u5982\uFF1AAgent\u3001Reinforcement Learning\u3001GraphRAG").addTextArea(
+      (text) => text.setPlaceholder("Agent\nReinforcement Learning\nGraphRAG\nLLM").setValue(this.plugin.settings.researchDirections).onChange(async (value) => {
+        this.plugin.settings.researchDirections = value;
         await this.plugin.saveSettings();
       })
     );
@@ -82,11 +82,11 @@ var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian.Setting(containerEl).setName("\u6BCF\u7C7B\u6700\u5927\u83B7\u53D6\u6570").setDesc("\u6BCF\u4E2A\u5206\u7C7B\u6700\u591A\u83B7\u53D6\u7684\u8BBA\u6587\u6570\u91CF").addText(
-      (text) => text.setPlaceholder("50").setValue(String(this.plugin.settings.maxResultsPerCategory)).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("\u6BCF\u65B9\u5411\u6700\u5927\u83B7\u53D6\u6570").setDesc("\u6BCF\u4E2A\u7814\u7A76\u65B9\u5411\u6700\u591A\u83B7\u53D6\u7684\u8BBA\u6587\u6570\u91CF").addText(
+      (text) => text.setPlaceholder("30").setValue(String(this.plugin.settings.maxResultsPerDirection)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
-          this.plugin.settings.maxResultsPerCategory = num;
+          this.plugin.settings.maxResultsPerDirection = num;
           await this.plugin.saveSettings();
         }
       })
@@ -184,20 +184,20 @@ async function queryArxiv(query, maxResults) {
   const xml = await response.text();
   return parseAtomXml(xml);
 }
-async function fetchPapersByCategory(category, maxResults) {
+async function fetchPapersByQuery(queryString, maxResults) {
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
   const dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
-  const query = `cat:${category.trim()} AND ${dateRange}`;
+  const query = `(${queryString}) AND ${dateRange}`;
   const result = await queryArxiv(query, maxResults);
   return result.entries;
 }
-async function fetchPapersByCategories(categories, maxResultsPerCategory) {
+async function fetchPapersByQueries(queries, maxResultsPerQuery) {
   const seen = /* @__PURE__ */ new Set();
   const allPapers = [];
-  for (const category of categories) {
+  for (const query of queries) {
     try {
-      const papers = await fetchPapersByCategory(category, maxResultsPerCategory);
+      const papers = await fetchPapersByQuery(query, maxResultsPerQuery);
       for (const paper of papers) {
         if (!seen.has(paper.id)) {
           seen.add(paper.id);
@@ -205,7 +205,7 @@ async function fetchPapersByCategories(categories, maxResultsPerCategory) {
         }
       }
     } catch (e) {
-      console.error(`Failed to fetch category ${category}:`, e);
+      console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
     }
   }
   return allPapers;
@@ -248,6 +248,30 @@ ${errorBody}`
   }
   const data = await response.json();
   return data.choices[0].message.content;
+}
+async function expandSearchQueries(apiKey, model, directions) {
+  const systemPrompt = `You are an AI research assistant that helps search academic papers on Arxiv.
+Given a list of research directions from a user, generate optimized search queries for the Arxiv API.
+
+Rules:
+- Search in ALL fields (title, abstract) using the \`all:\` prefix
+- For each direction, generate 1-3 alternative search terms/phrases
+- Use OR between alternatives for the same direction
+- Use AND to combine terms when they must both appear
+- Use quotes for multi-word phrases
+- Focus on recent AI/ML research terminology
+- KEEP QUERIES REASONABLY SHORT (under 200 chars each)
+
+Return a JSON object:
+{ "queries": ["query1", "query2", ...] }`;
+  const userMessage = `Generate Arxiv search queries for these research directions:
+${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
+  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
+  const result = JSON.parse(content);
+  if (!result.queries || !Array.isArray(result.queries)) {
+    throw new Error("Query expansion failed: missing 'queries' array");
+  }
+  return result.queries;
 }
 async function scorePapers(apiKey, model, papers, language) {
   const prepared = preparePaperForScoring(papers);
@@ -504,8 +528,8 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
   }
-  parseCategories() {
-    return this.settings.arxivCategories.split("\n").map((c) => c.trim()).filter((c) => c.length > 0);
+  parseResearchDirections() {
+    return this.settings.researchDirections.split("\n").map((c) => c.trim()).filter((c) => c.length > 0);
   }
   async testConnection() {
     if (!this.settings.deepseekApiKey) {
@@ -556,19 +580,32 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
       new import_obsidian2.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 DeepSeek API Key");
       return;
     }
-    const categories = this.parseCategories();
-    if (categories.length === 0) {
-      new import_obsidian2.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 Arxiv \u5206\u7C7B");
+    const directions = this.parseResearchDirections();
+    if (directions.length === 0) {
+      new import_obsidian2.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199\u7814\u7A76\u65B9\u5411\uFF08\u5982 Agent\u3001RL\u3001GraphRAG\uFF09");
       return;
     }
-    new import_obsidian2.Notice("\u{1F504} \u6B63\u5728\u4ECE Arxiv \u83B7\u53D6\u8BBA\u6587...");
+    new import_obsidian2.Notice("\u{1F916} Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...");
     try {
-      const allPapers = await fetchPapersByCategories(
-        categories,
-        this.settings.maxResultsPerCategory
+      let queries;
+      try {
+        queries = await expandSearchQueries(
+          this.settings.deepseekApiKey,
+          this.settings.model,
+          directions
+        );
+        new import_obsidian2.Notice(`\u{1F50D} Agent \u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
+      } catch (e) {
+        console.warn("Query expansion failed, using raw directions:", e);
+        queries = directions.map((d) => `all:${d}`);
+        new import_obsidian2.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
+      }
+      const allPapers = await fetchPapersByQueries(
+        queries,
+        this.settings.maxResultsPerDirection
       );
       if (allPapers.length === 0) {
-        new import_obsidian2.Notice("\u26A0\uFE0F \u4ECA\u65E5 Arxiv \u6682\u65E0\u65B0\u8BBA\u6587");
+        new import_obsidian2.Notice("\u26A0\uFE0F \u4ECA\u65E5 Arxiv \u6682\u65E0\u76F8\u5173\u8BBA\u6587");
         return;
       }
       new import_obsidian2.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
@@ -579,9 +616,6 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
         this.settings.outputLanguage
       );
       const topN = this.settings.topN;
-      const topScoredIds = new Set(
-        scoredPapers.slice(0, topN).map((sp) => sp.id)
-      );
       const scoredMap = /* @__PURE__ */ new Map();
       for (const sp of scoredPapers) {
         scoredMap.set(sp.id, sp);

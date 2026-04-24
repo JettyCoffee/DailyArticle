@@ -4,8 +4,8 @@ import {
   DEFAULT_SETTINGS,
   DailyArticleSettingTab,
 } from "./settings";
-import { fetchPapersByCategories, ArxivPaper } from "./arxiv";
-import { scorePapers, summarizePapers, ScoredPaper, PaperSummary } from "./deepseek";
+import { fetchPapersByQueries, ArxivPaper } from "./arxiv";
+import { scorePapers, summarizePapers, expandSearchQueries, ScoredPaper, PaperSummary } from "./deepseek";
 import { generateMarkdown, getOutputFilename } from "./output";
 
 export default class DailyArticlePlugin extends Plugin {
@@ -62,8 +62,8 @@ export default class DailyArticlePlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  private parseCategories(): string[] {
-    return this.settings.arxivCategories
+  private parseResearchDirections(): string[] {
+    return this.settings.researchDirections
       .split("\n")
       .map((c) => c.trim())
       .filter((c) => c.length > 0);
@@ -131,29 +131,45 @@ export default class DailyArticlePlugin extends Plugin {
       return;
     }
 
-    const categories = this.parseCategories();
-    if (categories.length === 0) {
-      new Notice("❌ 请先在设置中填写 Arxiv 分类");
+    const directions = this.parseResearchDirections();
+    if (directions.length === 0) {
+      new Notice("❌ 请先在设置中填写研究方向（如 Agent、RL、GraphRAG）");
       return;
     }
 
-    new Notice("🔄 正在从 Arxiv 获取论文...");
+    new Notice("🤖 Agent 正在分析研究方向并生成搜索查询...");
 
     try {
-      // Step 1: Fetch papers from Arxiv
-      const allPapers = await fetchPapersByCategories(
-        categories,
-        this.settings.maxResultsPerCategory
+      // Step 1: Agent expands research directions into search queries
+      let queries: string[];
+      try {
+        queries = await expandSearchQueries(
+          this.settings.deepseekApiKey,
+          this.settings.model,
+          directions
+        );
+        new Notice(`🔍 Agent 已生成 ${queries.length} 条搜索查询，正在获取论文...`);
+      } catch (e) {
+        // Fallback: use direction names directly as search queries
+        console.warn("Query expansion failed, using raw directions:", e);
+        queries = directions.map((d) => `all:${d}`);
+        new Notice(`🔍 直接搜索 ${queries.length} 个方向，正在获取论文...`);
+      }
+
+      // Step 2: Fetch papers from Arxiv using the generated queries
+      const allPapers = await fetchPapersByQueries(
+        queries,
+        this.settings.maxResultsPerDirection
       );
 
       if (allPapers.length === 0) {
-        new Notice("⚠️ 今日 Arxiv 暂无新论文");
+        new Notice("⚠️ 今日 Arxiv 暂无相关论文");
         return;
       }
 
       new Notice(`📚 已获取 ${allPapers.length} 篇论文，正在评分...`);
 
-      // Step 2: Score papers via DeepSeek
+      // Step 3: Score papers via DeepSeek
       const scoredPapers = await scorePapers(
         this.settings.deepseekApiKey,
         this.settings.model,
@@ -161,11 +177,8 @@ export default class DailyArticlePlugin extends Plugin {
         this.settings.outputLanguage
       );
 
-      // Step 3: Select Top N
+      // Step 4: Select Top N
       const topN = this.settings.topN;
-      const topScoredIds = new Set(
-        scoredPapers.slice(0, topN).map((sp) => sp.id)
-      );
 
       // Map scored papers by id for quick lookup
       const scoredMap = new Map<string, ScoredPaper>();
@@ -184,7 +197,7 @@ export default class DailyArticlePlugin extends Plugin {
 
       new Notice(`📝 正在生成 Top ${topPapers.length} 论文摘要...`);
 
-      // Step 4: Generate detailed summaries for top papers
+      // Step 5: Generate detailed summaries for top papers
       const summaries = await summarizePapers(
         this.settings.deepseekApiKey,
         this.settings.model,
@@ -202,7 +215,7 @@ export default class DailyArticlePlugin extends Plugin {
         };
       });
 
-      // Step 5: Generate and write the markdown file
+      // Step 6: Generate and write the markdown file
       const markdown = generateMarkdown(
         topPapers,
         enrichedSummaries,

@@ -11,9 +11,9 @@ export const MODEL_OPTIONS: Record<string, string> = {
 export interface DailyArticleSettings {
   deepseekApiKey: string;
   model: string;
-  arxivCategories: string;
+  researchDirections: string;
   fetchTime: string;
-  maxResultsPerCategory: number;
+  maxResultsPerDirection: number;
   topN: number;
   outputFolder: string;
   outputLanguage: string;
@@ -22,9 +22,9 @@ export interface DailyArticleSettings {
 export const DEFAULT_SETTINGS: DailyArticleSettings = {
   deepseekApiKey: "",
   model: "deepseek-v4-flash",
-  arxivCategories: "cs.AI\ncs.CL\ncs.CV\ncs.LG",
+  researchDirections: "Agent\nReinforcement Learning\nGraphRAG\nLLM",
   fetchTime: "08:00",
-  maxResultsPerCategory: 50,
+  maxResultsPerDirection: 30,
   topN: 10,
   outputFolder: "DailyArticle",
   outputLanguage: "zh-CN",
@@ -72,14 +72,14 @@ export class DailyArticleSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Arxiv 分类")
-      .setDesc("每行一个 Arxiv 分类标签，例如 cs.AI、cs.CL、cs.CV、cs.LG")
+      .setName("研究方向")
+      .setDesc("每行一个研究方向，Agent 将自动生成搜索查询。例如：Agent、Reinforcement Learning、GraphRAG")
       .addTextArea((text) =>
         text
-          .setPlaceholder("cs.AI\ncs.CL\ncs.CV\ncs.LG")
-          .setValue(this.plugin.settings.arxivCategories)
+          .setPlaceholder("Agent\nReinforcement Learning\nGraphRAG\nLLM")
+          .setValue(this.plugin.settings.researchDirections)
           .onChange(async (value) => {
-            this.plugin.settings.arxivCategories = value;
+            this.plugin.settings.researchDirections = value;
             await this.plugin.saveSettings();
           })
       );
@@ -98,16 +98,16 @@ export class DailyArticleSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("每类最大获取数")
-      .setDesc("每个分类最多获取的论文数量")
+      .setName("每方向最大获取数")
+      .setDesc("每个研究方向最多获取的论文数量")
       .addText((text) =>
         text
-          .setPlaceholder("50")
-          .setValue(String(this.plugin.settings.maxResultsPerCategory))
+          .setPlaceholder("30")
+          .setValue(String(this.plugin.settings.maxResultsPerDirection))
           .onChange(async (value) => {
             const num = parseInt(value);
             if (!isNaN(num) && num > 0) {
-              this.plugin.settings.maxResultsPerCategory = num;
+              this.plugin.settings.maxResultsPerDirection = num;
               await this.plugin.saveSettings();
             }
           })

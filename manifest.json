@@ -1,10 +1,10 @@
 {
   "id": "daily-article",
   "name": "DailyArticle",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "0.15.0",
-  "description": "每日从 Arxiv 获取论文，使用 DeepSeek API 评分排序，生成精选论文日报",
+  "description": "每日从 Arxiv 获取论文， 并使用 DeepSeek API 评分排序，生成精选论文日报",
   "author": "Ziqian Chen",
-  "authorUrl": "",
+  "authorUrl": "https://github.com/JettyCoffee",
   "isDesktopOnly": false
 }

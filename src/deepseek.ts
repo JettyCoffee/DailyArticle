@@ -68,6 +68,44 @@ async function callDeepSeek(
 }
 
 /**
+ * Use DeepSeek as an Agent to expand user's research directions into
+ * optimized Arxiv search queries (searching title + abstract).
+ *
+ * Each direction produces a query string like: `ti:Agent OR abs:"large language model agent"`
+ */
+export async function expandSearchQueries(
+  apiKey: string,
+  model: string,
+  directions: string[]
+): Promise<string[]> {
+  const systemPrompt = `You are an AI research assistant that helps search academic papers on Arxiv.
+Given a list of research directions from a user, generate optimized search queries for the Arxiv API.
+
+Rules:
+- Search in ALL fields (title, abstract) using the \`all:\` prefix
+- For each direction, generate 1-3 alternative search terms/phrases
+- Use OR between alternatives for the same direction
+- Use AND to combine terms when they must both appear
+- Use quotes for multi-word phrases
+- Focus on recent AI/ML research terminology
+- KEEP QUERIES REASONABLY SHORT (under 200 chars each)
+
+Return a JSON object:
+{ "queries": ["query1", "query2", ...] }`;
+
+  const userMessage = `Generate Arxiv search queries for these research directions:\n${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
+
+  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
+  const result = JSON.parse(content);
+
+  if (!result.queries || !Array.isArray(result.queries)) {
+    throw new Error("Query expansion failed: missing 'queries' array");
+  }
+
+  return result.queries;
+}
+
+/**
  * Score all papers by sending them to DeepSeek for relevance evaluation.
  * Returns scored paper list sorted by score (descending).
  */
