@@ -1,7 +1,6 @@
 import { ArxivPaper, preparePaperForScoring } from "./arxiv";
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-const DEEPSEEK_MODEL = "deepseek-chat";
 
 export interface ScoredPaper {
   id: string;
@@ -33,6 +32,7 @@ interface DeepSeekResponse {
 
 async function callDeepSeek(
   apiKey: string,
+  model: string,
   systemPrompt: string,
   userMessage: string
 ): Promise<string> {
@@ -48,7 +48,7 @@ async function callDeepSeek(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
+      model,
       messages,
       response_format: { type: "json_object" },
       temperature: 0.3,
@@ -73,6 +73,7 @@ async function callDeepSeek(
  */
 export async function scorePapers(
   apiKey: string,
+  model: string,
   papers: ArxivPaper[],
   language: string
 ): Promise<ScoredPaper[]> {
@@ -104,7 +105,7 @@ Be critical and discerning. Not every paper deserves a high score.`;
 
   const userMessage = `Please score the following ${prepared.length} papers:\n\n${paperList}`;
 
-  const content = await callDeepSeek(apiKey, systemPrompt, userMessage);
+  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
   const result = JSON.parse(content);
 
   if (!result.papers || !Array.isArray(result.papers)) {
@@ -123,6 +124,7 @@ Be critical and discerning. Not every paper deserves a high score.`;
  */
 export async function summarizePapers(
   apiKey: string,
+  model: string,
   papers: ArxivPaper[],
   language: string
 ): Promise<PaperSummary[]> {
@@ -147,7 +149,7 @@ The summary should be informative and capture the essence of the paper. Key poin
 
   const userMessage = `Generate detailed summaries for the following ${papers.length} papers:\n\n${paperList}`;
 
-  const content = await callDeepSeek(apiKey, systemPrompt, userMessage);
+  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
   const result = JSON.parse(content);
 
   if (!result.summaries || !Array.isArray(result.summaries)) {

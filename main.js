@@ -30,8 +30,15 @@ var import_obsidian2 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
+var MODEL_OPTIONS = {
+  "deepseek-v4-flash": "DeepSeek V4 Flash (\u9ED8\u8BA4\uFF0C\u5FEB\u901F\u7ECF\u6D4E)",
+  "deepseek-v4-pro": "DeepSeek V4 Pro\uFF08\u6700\u5F3A\uFF0C\u66F4\u8D35\uFF09",
+  "deepseek-chat": "deepseek-chat\uFF08\u65E7\u7248\uFF0C2026-07-24 \u505C\u7528\uFF09",
+  "deepseek-reasoner": "deepseek-reasoner\uFF08\u65E7\u7248\uFF0C2026-07-24 \u505C\u7528\uFF09"
+};
 var DEFAULT_SETTINGS = {
   deepseekApiKey: "",
+  model: "deepseek-v4-flash",
   arxivCategories: "cs.AI\ncs.CL\ncs.CV\ncs.LG",
   fetchTime: "08:00",
   maxResultsPerCategory: 50,
@@ -47,12 +54,22 @@ var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian.Setting(containerEl).setName("DeepSeek API Key").setDesc("DeepSeek API \u5BC6\u94A5\uFF0C\u7528\u4E8E\u8BBA\u6587\u6253\u5206\u548C\u6458\u8981\u751F\u6210").addText(
-      (text) => text.setPlaceholder("sk-...").setValue(this.plugin.settings.deepseekApiKey).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("DeepSeek API Key").setDesc("DeepSeek API \u5BC6\u94A5\uFF0C\u7528\u4E8E\u8BBA\u6587\u6253\u5206\u548C\u6458\u8981\u751F\u6210").addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("sk-...").setValue(this.plugin.settings.deepseekApiKey).onChange(async (value) => {
         this.plugin.settings.deepseekApiKey = value;
         await this.plugin.saveSettings();
-      })
-    );
+      });
+    });
+    new import_obsidian.Setting(containerEl).setName("DeepSeek \u6A21\u578B").setDesc("\u7528\u4E8E\u8BBA\u6587\u6253\u5206\u548C\u6458\u8981\u751F\u6210\u7684\u6A21\u578B\u3002V4 Flash \u6027\u4EF7\u6BD4\u6700\u9AD8").addDropdown((dropdown) => {
+      for (const value of Object.keys(MODEL_OPTIONS)) {
+        dropdown.addOption(value, MODEL_OPTIONS[value]);
+      }
+      dropdown.setValue(this.plugin.settings.model).onChange(async (value) => {
+        this.plugin.settings.model = value;
+        await this.plugin.saveSettings();
+      });
+    });
     new import_obsidian.Setting(containerEl).setName("Arxiv \u5206\u7C7B").setDesc("\u6BCF\u884C\u4E00\u4E2A Arxiv \u5206\u7C7B\u6807\u7B7E\uFF0C\u4F8B\u5982 cs.AI\u3001cs.CL\u3001cs.CV\u3001cs.LG").addTextArea(
       (text) => text.setPlaceholder("cs.AI\ncs.CL\ncs.CV\ncs.LG").setValue(this.plugin.settings.arxivCategories).onChange(async (value) => {
         this.plugin.settings.arxivCategories = value;
@@ -203,8 +220,7 @@ function preparePaperForScoring(papers) {
 
 // src/deepseek.ts
 var DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-var DEEPSEEK_MODEL = "deepseek-chat";
-async function callDeepSeek(apiKey, systemPrompt, userMessage) {
+async function callDeepSeek(apiKey, model, systemPrompt, userMessage) {
   const messages = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userMessage }
@@ -216,7 +232,7 @@ async function callDeepSeek(apiKey, systemPrompt, userMessage) {
       Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
+      model,
       messages,
       response_format: { type: "json_object" },
       temperature: 0.3,
@@ -233,7 +249,7 @@ ${errorBody}`
   const data = await response.json();
   return data.choices[0].message.content;
 }
-async function scorePapers(apiKey, papers, language) {
+async function scorePapers(apiKey, model, papers, language) {
   const prepared = preparePaperForScoring(papers);
   const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
   const systemPrompt = `You are an AI research assistant that evaluates Arxiv papers. Score each paper on a scale of 1-10 based on:
@@ -259,7 +275,7 @@ Abstract: ${p.summary}`
   const userMessage = `Please score the following ${prepared.length} papers:
 
 ${paperList}`;
-  const content = await callDeepSeek(apiKey, systemPrompt, userMessage);
+  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
   const result = JSON.parse(content);
   if (!result.papers || !Array.isArray(result.papers)) {
     throw new Error("Unexpected DeepSeek response format: missing 'papers' array");
@@ -268,7 +284,7 @@ ${paperList}`;
   scored.sort((a, b) => b.score - a.score);
   return scored;
 }
-async function summarizePapers(apiKey, papers, language) {
+async function summarizePapers(apiKey, model, papers, language) {
   const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
   const systemPrompt = `You are an AI research assistant. Generate a detailed analysis for each paper in ${langHint}.
 For each paper, provide:
@@ -288,7 +304,7 @@ Abstract: ${p.summary}`
   const userMessage = `Generate detailed summaries for the following ${papers.length} papers:
 
 ${paperList}`;
-  const content = await callDeepSeek(apiKey, systemPrompt, userMessage);
+  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
   const result = JSON.parse(content);
   if (!result.summaries || !Array.isArray(result.summaries)) {
     throw new Error("Unexpected DeepSeek response format: missing 'summaries' array");
@@ -449,28 +465,31 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
     this.lastFetchDate = "";
   }
   async onload() {
-    await this.loadSettings();
-    this.addSettingTab(new DailyArticleSettingTab(this.app, this));
-    this.addCommand({
-      id: "fetch-today-papers",
-      name: "\u7ACB\u5373\u83B7\u53D6\u4ECA\u65E5\u8BBA\u6587",
-      callback: () => {
-        this.fetchAndProcess();
-      }
-    });
-    this.addCommand({
-      id: "test-deepseek-connection",
-      name: "\u6D4B\u8BD5 DeepSeek API \u8FDE\u63A5",
-      callback: () => {
-        this.testConnection();
-      }
-    });
-    this.registerInterval(
-      window.setInterval(() => {
+    try {
+      await this.loadSettings();
+      this.addSettingTab(new DailyArticleSettingTab(this.app, this));
+      this.addCommand({
+        id: "fetch-today-papers",
+        name: "\u7ACB\u5373\u83B7\u53D6\u4ECA\u65E5\u8BBA\u6587",
+        callback: () => {
+          this.fetchAndProcess();
+        }
+      });
+      this.addCommand({
+        id: "test-deepseek-connection",
+        name: "\u6D4B\u8BD5 DeepSeek API \u8FDE\u63A5",
+        callback: () => {
+          this.testConnection();
+        }
+      });
+      const intervalId = window.setInterval(() => {
         this.checkScheduledFetch();
-      }, 6e4)
-    );
-    console.log("DailyArticle plugin loaded");
+      }, 6e4);
+      this.registerInterval(intervalId);
+      console.log("DailyArticle plugin loaded");
+    } catch (e) {
+      console.error("DailyArticle plugin failed to load:", e);
+    }
   }
   onunload() {
     console.log("DailyArticle plugin unloaded");
@@ -502,7 +521,7 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
           Authorization: `Bearer ${this.settings.deepseekApiKey}`
         },
         body: JSON.stringify({
-          model: "deepseek-chat",
+          model: this.settings.model,
           messages: [
             { role: "user", content: "Hello" }
           ],
@@ -555,6 +574,7 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
       new import_obsidian2.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
       const scoredPapers = await scorePapers(
         this.settings.deepseekApiKey,
+        this.settings.model,
         allPapers,
         this.settings.outputLanguage
       );
@@ -576,6 +596,7 @@ var DailyArticlePlugin = class extends import_obsidian2.Plugin {
       new import_obsidian2.Notice(`\u{1F4DD} \u6B63\u5728\u751F\u6210 Top ${topPapers.length} \u8BBA\u6587\u6458\u8981...`);
       const summaries = await summarizePapers(
         this.settings.deepseekApiKey,
+        this.settings.model,
         topPapers,
         this.settings.outputLanguage
       );

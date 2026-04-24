@@ -1,8 +1,16 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import DailyArticlePlugin from "./main";
 
+export const MODEL_OPTIONS: Record<string, string> = {
+  "deepseek-v4-flash": "DeepSeek V4 Flash (默认，快速经济)",
+  "deepseek-v4-pro": "DeepSeek V4 Pro（最强，更贵）",
+  "deepseek-chat": "deepseek-chat（旧版，2026-07-24 停用）",
+  "deepseek-reasoner": "deepseek-reasoner（旧版，2026-07-24 停用）",
+};
+
 export interface DailyArticleSettings {
   deepseekApiKey: string;
+  model: string;
   arxivCategories: string;
   fetchTime: string;
   maxResultsPerCategory: number;
@@ -13,6 +21,7 @@ export interface DailyArticleSettings {
 
 export const DEFAULT_SETTINGS: DailyArticleSettings = {
   deepseekApiKey: "",
+  model: "deepseek-v4-flash",
   arxivCategories: "cs.AI\ncs.CL\ncs.CV\ncs.LG",
   fetchTime: "08:00",
   maxResultsPerCategory: 50,
@@ -36,15 +45,31 @@ export class DailyArticleSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("DeepSeek API Key")
       .setDesc("DeepSeek API 密钥，用于论文打分和摘要生成")
-      .addText((text) =>
+      .addText((text) => {
+        text.inputEl.type = "password";
         text
           .setPlaceholder("sk-...")
           .setValue(this.plugin.settings.deepseekApiKey)
           .onChange(async (value) => {
             this.plugin.settings.deepseekApiKey = value;
             await this.plugin.saveSettings();
-          })
-      );
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("DeepSeek 模型")
+      .setDesc("用于论文打分和摘要生成的模型。V4 Flash 性价比最高")
+      .addDropdown((dropdown) => {
+        for (const value of Object.keys(MODEL_OPTIONS)) {
+          dropdown.addOption(value, MODEL_OPTIONS[value]);
+        }
+        dropdown
+          .setValue(this.plugin.settings.model)
+          .onChange(async (value) => {
+            this.plugin.settings.model = value;
+            await this.plugin.saveSettings();
+          });
+      });
 
     new Setting(containerEl)
       .setName("Arxiv 分类")

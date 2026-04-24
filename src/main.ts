@@ -13,34 +13,37 @@ export default class DailyArticlePlugin extends Plugin {
   private lastFetchDate: string = "";
 
   async onload() {
-    await this.loadSettings();
+    try {
+      await this.loadSettings();
 
-    this.addSettingTab(new DailyArticleSettingTab(this.app, this));
+      this.addSettingTab(new DailyArticleSettingTab(this.app, this));
 
-    this.addCommand({
-      id: "fetch-today-papers",
-      name: "立即获取今日论文",
-      callback: () => {
-        this.fetchAndProcess();
-      },
-    });
+      this.addCommand({
+        id: "fetch-today-papers",
+        name: "立即获取今日论文",
+        callback: () => {
+          this.fetchAndProcess();
+        },
+      });
 
-    this.addCommand({
-      id: "test-deepseek-connection",
-      name: "测试 DeepSeek API 连接",
-      callback: () => {
-        this.testConnection();
-      },
-    });
+      this.addCommand({
+        id: "test-deepseek-connection",
+        name: "测试 DeepSeek API 连接",
+        callback: () => {
+          this.testConnection();
+        },
+      });
 
-    // Schedule: check every 60 seconds if it's time to fetch
-    this.registerInterval(
-      window.setInterval(() => {
+      // Schedule: check every 60 seconds if it's time to fetch
+      const intervalId = window.setInterval(() => {
         this.checkScheduledFetch();
-      }, 60_000)
-    );
+      }, 60_000);
+      this.registerInterval(intervalId);
 
-    console.log("DailyArticle plugin loaded");
+      console.log("DailyArticle plugin loaded");
+    } catch (e) {
+      console.error("DailyArticle plugin failed to load:", e);
+    }
   }
 
   onunload() {
@@ -81,7 +84,7 @@ export default class DailyArticlePlugin extends Plugin {
           Authorization: `Bearer ${this.settings.deepseekApiKey}`,
         },
         body: JSON.stringify({
-          model: "deepseek-chat",
+          model: this.settings.model,
           messages: [
             { role: "user", content: "Hello" },
           ],
@@ -153,6 +156,7 @@ export default class DailyArticlePlugin extends Plugin {
       // Step 2: Score papers via DeepSeek
       const scoredPapers = await scorePapers(
         this.settings.deepseekApiKey,
+        this.settings.model,
         allPapers,
         this.settings.outputLanguage
       );
@@ -183,6 +187,7 @@ export default class DailyArticlePlugin extends Plugin {
       // Step 4: Generate detailed summaries for top papers
       const summaries = await summarizePapers(
         this.settings.deepseekApiKey,
+        this.settings.model,
         topPapers,
         this.settings.outputLanguage
       );

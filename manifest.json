@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "每日从 Arxiv 获取论文，使用 DeepSeek API 评分排序，生成精选论文日报",
-  "author": "DailyArticle",
+  "author": "Ziqian Chen",
   "authorUrl": "",
   "isDesktopOnly": false
 }
