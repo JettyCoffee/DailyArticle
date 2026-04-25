@@ -136,19 +136,19 @@ export async function fetchPapersByCategory(
  * Fetch papers by an Arxiv search query (using all: field to search title + abstract).
  * @param queryString - the search query
  * @param maxResults - max results to return
- * @param date - optional: search for papers submitted on this specific date (the full day).
- *               If omitted, searches the last 24 hours.
+ * @param startDate - optional: start of date range. Requires endDate.
+ * @param endDate - optional: end of date range. Requires startDate.
+ *                  If both omitted, searches the last 24 hours.
  */
 export async function fetchPapersByQuery(
   queryString: string,
   maxResults: number,
-  date?: Date
+  startDate?: Date,
+  endDate?: Date
 ): Promise<ArxivPaper[]> {
   let dateRange: string;
-  if (date) {
-    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0);
-    const end = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0);
-    dateRange = `submittedDate:[${formatDate(start)} TO ${formatDate(end)}]`;
+  if (startDate && endDate) {
+    dateRange = `submittedDate:[${formatDate(startDate)} TO ${formatDate(endDate)}]`;
   } else {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -164,19 +164,21 @@ export async function fetchPapersByQuery(
  * Fetch papers for multiple search queries and merge/deduplicate by paper ID.
  * @param queries - search queries
  * @param maxResultsPerQuery - max results per query
- * @param date - optional: search for papers submitted on this specific date
+ * @param startDate - optional: start of date range
+ * @param endDate - optional: end of date range
  */
 export async function fetchPapersByQueries(
   queries: string[],
   maxResultsPerQuery: number,
-  date?: Date
+  startDate?: Date,
+  endDate?: Date
 ): Promise<ArxivPaper[]> {
   const seen = new Set<string>();
   const allPapers: ArxivPaper[] = [];
 
   for (const query of queries) {
     try {
-      const papers = await fetchPapersByQuery(query, maxResultsPerQuery, date);
+      const papers = await fetchPapersByQuery(query, maxResultsPerQuery, startDate, endDate);
       for (const paper of papers) {
         if (!seen.has(paper.id)) {
           seen.add(paper.id);

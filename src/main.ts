@@ -165,11 +165,12 @@ export default class DailyArticlePlugin extends Plugin {
 
   /**
    * Fetch papers and generate a report.
-   * @param fetchDate - optional: search papers from this specific date (default: last 24h)
+   * @param startDate - optional: start of date range for paper search
+   * @param endDate - optional: end of date range for paper search
    * @param specificDirections - optional: only search these specific directions (default: all)
    * @returns true if the report was generated successfully
    */
-  async fetchAndProcess(fetchDate?: Date, specificDirections?: string[]): Promise<boolean> {
+  async fetchAndProcess(startDate?: Date, endDate?: Date, specificDirections?: string[]): Promise<boolean> {
     if (this.isFetching) {
       new Notice("⏳ 正在处理中，请稍候...");
       return false;
@@ -211,7 +212,8 @@ export default class DailyArticlePlugin extends Plugin {
       let allPapers = await fetchPapersByQueries(
         queries,
         this.settings.maxResultsPerDirection,
-        fetchDate
+        startDate,
+        endDate
       );
 
       // If DeepSeek-generated queries are too specific for the date range,
@@ -222,7 +224,8 @@ export default class DailyArticlePlugin extends Plugin {
         allPapers = await fetchPapersByQueries(
           fallbackQueries,
           this.settings.maxResultsPerDirection,
-          fetchDate
+          startDate,
+          endDate
         );
         if (allPapers.length > 0) {
           new Notice(`🔍 使用研究方向名直接搜索，已获取 ${allPapers.length} 篇论文`);
@@ -292,10 +295,10 @@ export default class DailyArticlePlugin extends Plugin {
         enrichedSummaries,
         allPapers.length,
         this.settings.outputLanguage,
-        fetchDate
+        startDate
       );
 
-      await this.writeOutputFile(markdown, fetchDate);
+      await this.writeOutputFile(markdown, startDate);
 
       new Notice(
         `✅ 日报已生成！共 ${allPapers.length} 篇，精选 Top ${topPapers.length}`

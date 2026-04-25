@@ -1,1 +1,105 @@
-/* DailyArticle Plugin Styles */
+/* ============================================
+   DailyArticle Sidebar Styles
+   ============================================ */
+
+.daily-article-sidebar {
+  padding: 12px 16px 24px;
+}
+
+/* ---- Header ---- */
+
+.daily-article-sidebar .daily-article-header h2 {
+  margin: 0 0 16px 0;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+/* ---- Cards ---- */
+
+.daily-article-sidebar .daily-article-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.daily-article-sidebar .daily-article-card h3 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Card inner settings spacing */
+.daily-article-sidebar .daily-article-card .setting-item {
+  border-top: none;
+  padding: 6px 0;
+}
+
+.daily-article-sidebar .daily-article-card .setting-item-info {
+  flex: 0 0 auto;
+  min-width: 70px;
+}
+
+.daily-article-sidebar .daily-article-card .setting-item-name {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.daily-article-sidebar .daily-article-card .setting-item-control {
+  flex: 1 1 auto;
+}
+
+/* ----- Date Range ----- */
+
+.daily-article-sidebar .daily-article-date-range {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--background-primary);
+  border-radius: 8px;
+}
+
+.daily-article-sidebar .daily-article-date-range .setting-item {
+  padding: 4px 0;
+}
+
+/* Custom date inputs */
+.daily-article-sidebar input[type="date"] {
+  width: 100%;
+}
+
+/* ---- Side-by-side row ---- */
+
+.daily-article-sidebar .daily-article-setting-row {
+  display: flex;
+  gap: 8px;
+}
+
+.daily-article-sidebar .daily-article-setting-row .setting-item {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Action button ---- */
+
+.daily-article-sidebar .daily-article-card .setting-item button {
+  width: 100%;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---- Status ---- */
+
+.daily-article-sidebar .daily-article-status {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--background-primary);
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-muted);
+}
