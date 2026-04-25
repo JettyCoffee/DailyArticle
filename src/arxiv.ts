@@ -1,3 +1,5 @@
+import { requestUrl, Notice } from "obsidian";
+
 export interface ArxivPaper {
   id: string;
   title: string;
@@ -106,12 +108,12 @@ async function queryArxiv(
     sortOrder: "descending",
   });
 
-  const url = `http://export.arxiv.org/api/query?${params.toString()}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Arxiv API error: ${response.status} ${response.statusText}`);
+  const url = `https://export.arxiv.org/api/query?${params.toString()}`;
+  const response = await requestUrl({ url });
+  if (response.status >= 400) {
+    throw new Error(`Arxiv API error: ${response.status}`);
   }
-  const xml = await response.text();
+  const xml = response.text;
   return parseAtomXml(xml);
 }
 
@@ -187,6 +189,7 @@ export async function fetchPapersByQueries(
       }
     } catch (e) {
       console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
+      new Notice(`⚠️ arXiv 请求错误: ${(e as Error).message?.slice(0, 100)}`, 6000);
     }
   }
 

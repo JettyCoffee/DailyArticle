@@ -26,7 +26,7 @@ __export(main_exports, {
   default: () => DailyArticlePlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -142,6 +142,7 @@ var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 
 // src/arxiv.ts
+var import_obsidian2 = require("obsidian");
 function pad(n) {
   return n.toString().padStart(2, "0");
 }
@@ -202,12 +203,12 @@ async function queryArxiv(query, maxResults) {
     sortBy: "submittedDate",
     sortOrder: "descending"
   });
-  const url = `http://export.arxiv.org/api/query?${params.toString()}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Arxiv API error: ${response.status} ${response.statusText}`);
+  const url = `https://export.arxiv.org/api/query?${params.toString()}`;
+  const response = await (0, import_obsidian2.requestUrl)({ url });
+  if (response.status >= 400) {
+    throw new Error(`Arxiv API error: ${response.status}`);
   }
-  const xml = await response.text();
+  const xml = response.text;
   return parseAtomXml(xml);
 }
 async function fetchPapersByQuery(queryString, maxResults, startDate, endDate) {
@@ -224,6 +225,7 @@ async function fetchPapersByQuery(queryString, maxResults, startDate, endDate) {
   return result.entries;
 }
 async function fetchPapersByQueries(queries, maxResultsPerQuery, startDate, endDate) {
+  var _a;
   const seen = /* @__PURE__ */ new Set();
   const allPapers = [];
   for (const query of queries) {
@@ -237,6 +239,7 @@ async function fetchPapersByQueries(queries, maxResultsPerQuery, startDate, endD
       }
     } catch (e) {
       console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
+      new import_obsidian2.Notice(`\u26A0\uFE0F arXiv \u8BF7\u6C42\u9519\u8BEF: ${(_a = e.message) == null ? void 0 : _a.slice(0, 100)}`, 6e3);
     }
   }
   return allPapers;
@@ -524,7 +527,7 @@ function getOutputFilename(date) {
 }
 
 // src/view.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 var VIEW_TYPE = "daily-article-sidebar";
 var TIME_PRESETS = [
   { label: "\u6700\u8FD1 24 \u5C0F\u65F6", days: 1 },
@@ -533,7 +536,7 @@ var TIME_PRESETS = [
   { label: "\u6700\u8FD1 30 \u5929", days: 30 },
   { label: "\u81EA\u5B9A\u4E49\u8303\u56F4", days: -1 }
 ];
-var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
+var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -561,7 +564,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
     header.createEl("h2", { text: "DailyArticle" });
     const dateCard = containerEl.createDiv("daily-article-card");
     dateCard.createEl("h3", { text: "\u{1F4C5} \u641C\u7D22\u65F6\u95F4\u8303\u56F4" });
-    new import_obsidian2.Setting(dateCard).setName("\u9009\u62E9\u8303\u56F4").addDropdown((dropdown) => {
+    new import_obsidian3.Setting(dateCard).setName("\u9009\u62E9\u8303\u56F4").addDropdown((dropdown) => {
       for (const preset of TIME_PRESETS) {
         dropdown.addOption(String(preset.days), preset.label);
       }
@@ -571,12 +574,12 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
     });
     this.dateRangeContainer = dateCard.createDiv("daily-article-date-range");
     this.dateRangeContainer.style.display = "none";
-    new import_obsidian2.Setting(this.dateRangeContainer).setName("\u8D77\u59CB\u65E5\u671F").addText((text) => {
+    new import_obsidian3.Setting(this.dateRangeContainer).setName("\u8D77\u59CB\u65E5\u671F").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.getDefaultDateStr(-7));
       this.dateStartInput = text.inputEl;
     });
-    new import_obsidian2.Setting(this.dateRangeContainer).setName("\u7ED3\u675F\u65E5\u671F").addText((text) => {
+    new import_obsidian3.Setting(this.dateRangeContainer).setName("\u7ED3\u675F\u65E5\u671F").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.getDefaultDateStr(0));
       this.dateEndInput = text.inputEl;
@@ -585,7 +588,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
     dirCard.createEl("h3", { text: "\u{1F50D} \u7814\u7A76\u65B9\u5411" });
     const directions = this.getDirections();
     if (directions.length > 0) {
-      new import_obsidian2.Setting(dirCard).setName("\u8FC7\u6EE4\u65B9\u5411").addDropdown((dropdown) => {
+      new import_obsidian3.Setting(dirCard).setName("\u8FC7\u6EE4\u65B9\u5411").addDropdown((dropdown) => {
         dropdown.addOption("all", "\u6240\u6709\u65B9\u5411");
         for (const dir of directions) {
           dropdown.addOption(dir, dir);
@@ -596,7 +599,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
     }
     const settingsCard = containerEl.createDiv("daily-article-card");
     settingsCard.createEl("h3", { text: "\u2699\uFE0F \u641C\u7D22\u53C2\u6570" });
-    new import_obsidian2.Setting(settingsCard).setName("DeepSeek \u6A21\u578B").addDropdown((dropdown) => {
+    new import_obsidian3.Setting(settingsCard).setName("DeepSeek \u6A21\u578B").addDropdown((dropdown) => {
       for (const [value, label] of Object.entries(MODEL_OPTIONS)) {
         dropdown.addOption(value, label);
       }
@@ -607,7 +610,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
       });
     });
     const rowDiv = settingsCard.createDiv("daily-article-setting-row");
-    new import_obsidian2.Setting(rowDiv).setName("\u6BCF\u65B9\u5411\u83B7\u53D6\u6570").addText((text) => {
+    new import_obsidian3.Setting(rowDiv).setName("\u6BCF\u65B9\u5411\u83B7\u53D6\u6570").addText((text) => {
       text.setPlaceholder("30").setValue(String(this.plugin.settings.maxResultsPerDirection)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -616,7 +619,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
         }
       });
     });
-    new import_obsidian2.Setting(rowDiv).setName("\u7CBE\u9009\u6570\u91CF").addText((text) => {
+    new import_obsidian3.Setting(rowDiv).setName("\u7CBE\u9009\u6570\u91CF").addText((text) => {
       text.setPlaceholder("10").setValue(String(this.plugin.settings.topN)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -625,7 +628,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
         }
       });
     });
-    new import_obsidian2.Setting(settingsCard).setName("\u8F93\u51FA\u8BED\u8A00").addDropdown((dropdown) => {
+    new import_obsidian3.Setting(settingsCard).setName("\u8F93\u51FA\u8BED\u8A00").addDropdown((dropdown) => {
       dropdown.addOption("zh-CN", "\u4E2D\u6587").addOption("en", "English").setValue(this.plugin.settings.outputLanguage).onChange(async (value) => {
         this.plugin.settings.outputLanguage = value;
         await this.plugin.saveSettings();
@@ -633,7 +636,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
     });
     const actionCard = containerEl.createDiv("daily-article-card");
     actionCard.createEl("h3", { text: "\u25B6\uFE0F \u64CD\u4F5C" });
-    new import_obsidian2.Setting(actionCard).addButton((button) => {
+    new import_obsidian3.Setting(actionCard).addButton((button) => {
       button.setButtonText("\u641C\u7D22\u5E76\u751F\u6210\u62A5\u544A").setCta().onClick(() => this.handleSearch());
     });
     this.statusEl = actionCard.createDiv("daily-article-status");
@@ -662,7 +665,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
       const startVal = (_b = this.dateStartInput) == null ? void 0 : _b.value;
       const endVal = (_c = this.dateEndInput) == null ? void 0 : _c.value;
       if (!startVal || !endVal) {
-        new import_obsidian2.Notice("\u274C \u8BF7\u9009\u62E9\u8D77\u6B62\u65E5\u671F");
+        new import_obsidian3.Notice("\u274C \u8BF7\u9009\u62E9\u8D77\u6B62\u65E5\u671F");
         return {};
       }
       const [sy, sm, sd] = startVal.split("-").map(Number);
@@ -699,7 +702,7 @@ var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
 
 // src/main.ts
 var GITHUB_REPO = "JettyCoffee/DailyArticle";
-var DailyArticlePlugin = class extends import_obsidian3.Plugin {
+var DailyArticlePlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
     this.lastFetchDate = "";
@@ -777,10 +780,10 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
   }
   async testConnection() {
     if (!this.settings.deepseekApiKey) {
-      new import_obsidian3.Notice("\u274C \u8BF7\u5148\u586B\u5199 DeepSeek API Key");
+      new import_obsidian4.Notice("\u274C \u8BF7\u5148\u586B\u5199 DeepSeek API Key");
       return;
     }
-    new import_obsidian3.Notice("\u{1F504} \u6B63\u5728\u6D4B\u8BD5 DeepSeek API \u8FDE\u63A5...");
+    new import_obsidian4.Notice("\u{1F504} \u6B63\u5728\u6D4B\u8BD5 DeepSeek API \u8FDE\u63A5...");
     try {
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
@@ -797,13 +800,13 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
         })
       });
       if (response.ok) {
-        new import_obsidian3.Notice("\u2705 DeepSeek API \u8FDE\u63A5\u6210\u529F\uFF01");
+        new import_obsidian4.Notice("\u2705 DeepSeek API \u8FDE\u63A5\u6210\u529F\uFF01");
       } else {
         const text = await response.text();
-        new import_obsidian3.Notice(`\u274C API \u8FDE\u63A5\u5931\u8D25: ${response.status} ${text.slice(0, 100)}`);
+        new import_obsidian4.Notice(`\u274C API \u8FDE\u63A5\u5931\u8D25: ${response.status} ${text.slice(0, 100)}`);
       }
     } catch (e) {
-      new import_obsidian3.Notice(`\u274C \u7F51\u7EDC\u9519\u8BEF: ${e.message}`);
+      new import_obsidian4.Notice(`\u274C \u7F51\u7EDC\u9519\u8BEF: ${e.message}`);
     }
   }
   checkScheduledFetch() {
@@ -828,20 +831,20 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
    */
   async fetchAndProcess(startDate, endDate, specificDirections) {
     if (this.isFetching) {
-      new import_obsidian3.Notice("\u23F3 \u6B63\u5728\u5904\u7406\u4E2D\uFF0C\u8BF7\u7A0D\u5019...");
+      new import_obsidian4.Notice("\u23F3 \u6B63\u5728\u5904\u7406\u4E2D\uFF0C\u8BF7\u7A0D\u5019...");
       return false;
     }
     if (!this.settings.deepseekApiKey) {
-      new import_obsidian3.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 DeepSeek API Key");
+      new import_obsidian4.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 DeepSeek API Key");
       return false;
     }
     const directions = specificDirections != null ? specificDirections : this.parseResearchDirections();
     if (directions.length === 0) {
-      new import_obsidian3.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199\u7814\u7A76\u65B9\u5411\uFF08\u5982 Agent\u3001RL\u3001GraphRAG\uFF09");
+      new import_obsidian4.Notice("\u274C \u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199\u7814\u7A76\u65B9\u5411\uFF08\u5982 Agent\u3001RL\u3001GraphRAG\uFF09");
       return false;
     }
     this.isFetching = true;
-    new import_obsidian3.Notice("\u{1F916} Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...");
+    new import_obsidian4.Notice("\u{1F916} Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...");
     try {
       let queries;
       try {
@@ -850,11 +853,11 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
           this.settings.model,
           directions
         );
-        new import_obsidian3.Notice(`\u{1F50D} Agent \u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
+        new import_obsidian4.Notice(`\u{1F50D} Agent \u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
       } catch (e) {
         console.warn("Query expansion failed, using raw directions:", e);
         queries = directions.map((d) => `all:${d}`);
-        new import_obsidian3.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
+        new import_obsidian4.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
       }
       let allPapers = await fetchPapersByQueries(
         queries,
@@ -872,14 +875,14 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
           endDate
         );
         if (allPapers.length > 0) {
-          new import_obsidian3.Notice(`\u{1F50D} \u4F7F\u7528\u7814\u7A76\u65B9\u5411\u540D\u76F4\u63A5\u641C\u7D22\uFF0C\u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587`);
+          new import_obsidian4.Notice(`\u{1F50D} \u4F7F\u7528\u7814\u7A76\u65B9\u5411\u540D\u76F4\u63A5\u641C\u7D22\uFF0C\u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587`);
         }
       }
       if (allPapers.length === 0) {
-        new import_obsidian3.Notice("\u26A0\uFE0F \u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
+        new import_obsidian4.Notice("\u26A0\uFE0F \u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
         return false;
       }
-      new import_obsidian3.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
+      new import_obsidian4.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
       const scoredPapers = await scorePapers(
         this.settings.deepseekApiKey,
         this.settings.model,
@@ -902,7 +905,7 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
           topPapers.push(paper);
         }
       }
-      new import_obsidian3.Notice(`\u{1F4DD} \u6B63\u5728\u751F\u6210 Top ${topPapers.length} \u8BBA\u6587\u6458\u8981...`);
+      new import_obsidian4.Notice(`\u{1F4DD} \u6B63\u5728\u751F\u6210 Top ${topPapers.length} \u8BBA\u6587\u6458\u8981...`);
       const summaries = await summarizePapers(
         this.settings.deepseekApiKey,
         this.settings.model,
@@ -926,13 +929,13 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
         startDate
       );
       await this.writeOutputFile(markdown, startDate);
-      new import_obsidian3.Notice(
+      new import_obsidian4.Notice(
         `\u2705 \u65E5\u62A5\u5DF2\u751F\u6210\uFF01\u5171 ${allPapers.length} \u7BC7\uFF0C\u7CBE\u9009 Top ${topPapers.length}`
       );
       return true;
     } catch (e) {
       console.error("DailyArticle fetch error:", e);
-      new import_obsidian3.Notice(`\u274C \u5904\u7406\u5931\u8D25: ${e.message}`);
+      new import_obsidian4.Notice(`\u274C \u5904\u7406\u5931\u8D25: ${e.message}`);
       return false;
     } finally {
       this.isFetching = false;
@@ -947,7 +950,7 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
       await this.app.vault.createFolder(folderPath);
     }
     const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-    if (existingFile instanceof import_obsidian3.TFile) {
+    if (existingFile instanceof import_obsidian4.TFile) {
       await this.app.vault.modify(existingFile, content);
     } else {
       await this.app.vault.create(filePath, content);
@@ -1017,11 +1020,11 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
         const content = await response.text();
         await adapter.write(`${pluginDir}/${file}`, content);
       }
-      new import_obsidian3.Notice("\u2705 \u66F4\u65B0\u6587\u4EF6\u5DF2\u4E0B\u8F7D\uFF0C\u8BF7\u91CD\u542F Obsidian \u751F\u6548");
+      new import_obsidian4.Notice("\u2705 \u66F4\u65B0\u6587\u4EF6\u5DF2\u4E0B\u8F7D\uFF0C\u8BF7\u91CD\u542F Obsidian \u751F\u6548");
       return true;
     } catch (e) {
       console.error("Update failed:", e);
-      new import_obsidian3.Notice(`\u274C \u66F4\u65B0\u5931\u8D25: ${e.message}`);
+      new import_obsidian4.Notice(`\u274C \u66F4\u65B0\u5931\u8D25: ${e.message}`);
       return false;
     }
   }
