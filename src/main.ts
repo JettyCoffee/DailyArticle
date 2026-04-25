@@ -208,11 +208,26 @@ export default class DailyArticlePlugin extends Plugin {
       }
 
       // Step 2: Fetch papers from Arxiv using the generated queries
-      const allPapers = await fetchPapersByQueries(
+      let allPapers = await fetchPapersByQueries(
         queries,
         this.settings.maxResultsPerDirection,
         fetchDate
       );
+
+      // If DeepSeek-generated queries are too specific for the date range,
+      // fall back to broader direction-name queries
+      if (allPapers.length === 0) {
+        console.warn("Generated queries returned no papers, retrying with raw direction queries");
+        const fallbackQueries = directions.map((d) => `all:${d}`);
+        allPapers = await fetchPapersByQueries(
+          fallbackQueries,
+          this.settings.maxResultsPerDirection,
+          fetchDate
+        );
+        if (allPapers.length > 0) {
+          new Notice(`🔍 使用研究方向名直接搜索，已获取 ${allPapers.length} 篇论文`);
+        }
+      }
 
       if (allPapers.length === 0) {
         new Notice("⚠️ 该日期暂无相关论文");
@@ -232,16 +247,20 @@ export default class DailyArticlePlugin extends Plugin {
       // Step 4: Select Top N
       const topN = this.settings.topN;
 
-      // Map scored papers by id for quick lookup
+      // Map papers by id for quick lookup
       const scoredMap = new Map<string, ScoredPaper>();
+      const paperMap = new Map<string, ArxivPaper>();
       for (const sp of scoredPapers) {
         scoredMap.set(sp.id, sp);
+      }
+      for (const p of allPapers) {
+        paperMap.set(p.id, p);
       }
 
       // Get top N papers in order
       const topPapers: ArxivPaper[] = [];
       for (const sp of scoredPapers.slice(0, topN)) {
-        const paper = allPapers.find((p) => p.id === sp.id);
+        const paper = paperMap.get(sp.id);
         if (paper) {
           topPapers.push(paper);
         }

@@ -82,13 +82,18 @@ export async function expandSearchQueries(
 Given a list of research directions from a user, generate optimized search queries for the Arxiv API.
 
 Rules:
-- Search in ALL fields (title, abstract) using the \`all:\` prefix
-- For each direction, generate 1-3 alternative search terms/phrases
-- Use OR between alternatives for the same direction
-- Use AND to combine terms when they must both appear
-- Use quotes for multi-word phrases
+- EVERY query MUST start with \`all:\` prefix (this searches title + abstract)
+- For each direction, generate 1-2 alternative search terms/phrases
+- Use OR between alternatives for the same direction (broader = better)
+- Use quotes for multi-word phrases, like \`all:"multi-agent systems"\`
+- Keep queries short and broad — avoid stacking multiple AND conditions
 - Focus on recent AI/ML research terminology
-- KEEP QUERIES REASONABLY SHORT (under 200 chars each)
+
+CRITICAL: Each query must begin with "all:". Examples of GOOD queries:
+  - all:Agent
+  - all:"reinforcement learning"
+  - all:"large language model"
+  - all:"graph RAG" OR all:"knowledge graph"
 
 Return a JSON object:
 { "queries": ["query1", "query2", ...] }`;
@@ -102,7 +107,12 @@ Return a JSON object:
     throw new Error("Query expansion failed: missing 'queries' array");
   }
 
-  return result.queries;
+  // Safety: ensure every query has the all: prefix
+  return result.queries.map((q: string) => {
+    const trimmed = q.trim();
+    if (trimmed.startsWith("all:") || trimmed.startsWith("cat:")) return trimmed;
+    return `all:${trimmed}`;
+  });
 }
 
 /**

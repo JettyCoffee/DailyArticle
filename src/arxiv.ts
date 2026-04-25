@@ -154,7 +154,7 @@ export async function fetchPapersByQuery(
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
   }
-  const query = `(${queryString}) AND ${dateRange}`;
+  const query = `${queryString} AND ${dateRange}`;
 
   const result = await queryArxiv(query, maxResults);
   return result.entries;

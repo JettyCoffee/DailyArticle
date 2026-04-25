@@ -221,7 +221,7 @@ async function fetchPapersByQuery(queryString, maxResults, date) {
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
     dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
   }
-  const query = `(${queryString}) AND ${dateRange}`;
+  const query = `${queryString} AND ${dateRange}`;
   const result = await queryArxiv(query, maxResults);
   return result.entries;
 }
@@ -287,13 +287,18 @@ async function expandSearchQueries(apiKey, model, directions) {
 Given a list of research directions from a user, generate optimized search queries for the Arxiv API.
 
 Rules:
-- Search in ALL fields (title, abstract) using the \`all:\` prefix
-- For each direction, generate 1-3 alternative search terms/phrases
-- Use OR between alternatives for the same direction
-- Use AND to combine terms when they must both appear
-- Use quotes for multi-word phrases
+- EVERY query MUST start with \`all:\` prefix (this searches title + abstract)
+- For each direction, generate 1-2 alternative search terms/phrases
+- Use OR between alternatives for the same direction (broader = better)
+- Use quotes for multi-word phrases, like \`all:"multi-agent systems"\`
+- Keep queries short and broad \u2014 avoid stacking multiple AND conditions
 - Focus on recent AI/ML research terminology
-- KEEP QUERIES REASONABLY SHORT (under 200 chars each)
+
+CRITICAL: Each query must begin with "all:". Examples of GOOD queries:
+  - all:Agent
+  - all:"reinforcement learning"
+  - all:"large language model"
+  - all:"graph RAG" OR all:"knowledge graph"
 
 Return a JSON object:
 { "queries": ["query1", "query2", ...] }`;
@@ -304,7 +309,12 @@ ${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
   if (!result.queries || !Array.isArray(result.queries)) {
     throw new Error("Query expansion failed: missing 'queries' array");
   }
-  return result.queries;
+  return result.queries.map((q) => {
+    const trimmed = q.trim();
+    if (trimmed.startsWith("all:") || trimmed.startsWith("cat:"))
+      return trimmed;
+    return `all:${trimmed}`;
+  });
 }
 async function scorePapers(apiKey, model, papers, language) {
   const prepared = preparePaperForScoring(papers);
@@ -812,11 +822,23 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
         queries = directions.map((d) => `all:${d}`);
         new import_obsidian3.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
       }
-      const allPapers = await fetchPapersByQueries(
+      let allPapers = await fetchPapersByQueries(
         queries,
         this.settings.maxResultsPerDirection,
         fetchDate
       );
+      if (allPapers.length === 0) {
+        console.warn("Generated queries returned no papers, retrying with raw direction queries");
+        const fallbackQueries = directions.map((d) => `all:${d}`);
+        allPapers = await fetchPapersByQueries(
+          fallbackQueries,
+          this.settings.maxResultsPerDirection,
+          fetchDate
+        );
+        if (allPapers.length > 0) {
+          new import_obsidian3.Notice(`\u{1F50D} \u4F7F\u7528\u7814\u7A76\u65B9\u5411\u540D\u76F4\u63A5\u641C\u7D22\uFF0C\u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587`);
+        }
+      }
       if (allPapers.length === 0) {
         new import_obsidian3.Notice("\u26A0\uFE0F \u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
         return false;
@@ -830,12 +852,16 @@ var DailyArticlePlugin = class extends import_obsidian3.Plugin {
       );
       const topN = this.settings.topN;
       const scoredMap = /* @__PURE__ */ new Map();
+      const paperMap = /* @__PURE__ */ new Map();
       for (const sp of scoredPapers) {
         scoredMap.set(sp.id, sp);
       }
+      for (const p of allPapers) {
+        paperMap.set(p.id, p);
+      }
       const topPapers = [];
       for (const sp of scoredPapers.slice(0, topN)) {
-        const paper = allPapers.find((p) => p.id === sp.id);
+        const paper = paperMap.get(sp.id);
         if (paper) {
           topPapers.push(paper);
         }
