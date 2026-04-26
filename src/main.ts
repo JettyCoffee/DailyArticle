@@ -139,7 +139,8 @@ export default class DailyArticlePlugin extends Plugin {
         new Notice(`❌ API 连接失败: ${response.status} ${text.slice(0, 100)}`);
       }
     } catch (e) {
-      new Notice(`❌ 网络错误: ${e.message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      new Notice(`❌ 网络错误: ${msg}`);
     }
   }
 
@@ -240,8 +241,9 @@ export default class DailyArticlePlugin extends Plugin {
 
       return true;
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("DailyArticle fetch error:", e);
-      new Notice(`❌ 处理失败: e.message`);
+      new Notice(`❌ 处理失败: ${msg}`);
       return false;
     } finally {
       this.isFetching = false;

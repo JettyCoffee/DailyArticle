@@ -39,7 +39,7 @@ var MODEL_OPTIONS = {
 var DEFAULT_SETTINGS = {
   deepseekApiKey: "",
   model: "deepseek-v4-flash",
-  researchDirections: "Agent\nReinforcement Learning\nGraphRAG\nLLM",
+  researchDirections: "Agent\nReinforcement Learning\n",
   fetchTime: "08:00",
   maxResultsPerDirection: 30,
   topN: 10,
@@ -665,6 +665,11 @@ ${errorBody}`
     return choice.message.tool_calls[0].function.arguments;
   }
   if ((_f = choice == null ? void 0 : choice.message) == null ? void 0 : _f.content) {
+    try {
+      JSON.parse(choice.message.content);
+    } catch (e) {
+      throw new Error("DeepSeek returned non-JSON content, falling back to json_object mode");
+    }
     return choice.message.content;
   }
   throw new Error("Unexpected DeepSeek response: no tool_calls or content");
@@ -718,8 +723,8 @@ var QUERY_TOOL = {
   }
 };
 async function expandSearchQueries(apiKey, model, directions) {
-  const systemPrompt = "You are a research assistant that generates Arxiv search queries. Given research directions, produce 1-2 short queries per direction. EVERY query MUST start with all: prefix. Use quotes for multi-word phrases. Keep queries broad and simple. Do NOT stack multiple AND conditions.";
-  const userMessage = `Generate Arxiv search queries for:
+  const systemPrompt = "You are a research assistant that generates precise Arxiv search queries. Given research directions, produce exactly ONE query per direction. CRITICAL: Each query must be DIRECTLY about the given direction \u2014 no tangential topics. EVERY query MUST start with all: prefix. Use quotes for multi-word phrases. Include the most specific terms from the direction to ensure relevance.";
+  const userMessage = `Generate one precise Arxiv search query for EACH direction:
 ${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
   let content;
   try {
@@ -767,15 +772,18 @@ var SCORE_TOOL = {
     }
   }
 };
-async function scorePaperBatch(apiKey, model, batch, language) {
+async function scorePaperBatch(apiKey, model, batch, language, directions) {
   const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
-  const systemPrompt = `You are a research paper reviewer. Score each paper 1-10 on novelty, impact, quality, and relevance. Be critical \u2014 most papers score 3-7. Write reasons in ${langHint}.`;
+  const directionList = directions.join(", ");
+  const systemPrompt = `You are a research paper reviewer. Score each paper 1-10 based on: (1) relevance to the specified research directions, (2) novelty, (3) impact, (4) quality. Relevance is the MOST important factor \u2014 only score high if the paper is clearly about one of the given directions. Write reasons in ${langHint}. Be critical \u2014 most papers score 3-5.`;
   const paperList = batch.map(
     (p, i) => `[${i + 1}] ID: ${p.id}
 Title: ${p.title}
 Abstract: ${p.summary}`
   ).join("\n---\n");
-  const userMessage = `Score these ${batch.length} papers:
+  const userMessage = `Research directions: ${directionList}
+
+Score these ${batch.length} papers for relevance to the above directions:
 
 ${paperList}`;
   let content;
@@ -791,7 +799,7 @@ ${paperList}`;
   }
   return result.papers;
 }
-async function scorePapers(apiKey, model, papers, language, onProgress) {
+async function scorePapers(apiKey, model, papers, language, directions, onProgress) {
   if (papers.length === 0)
     return [];
   const toScore = [];
@@ -818,7 +826,7 @@ async function scorePapers(apiKey, model, papers, language, onProgress) {
       percent: Math.round(i / toScore.length * 80) + 10
       // 10-90% range
     });
-    const batchResults = await scorePaperBatch(apiKey, model, batch, language);
+    const batchResults = await scorePaperBatch(apiKey, model, batch, language, directions);
     for (const r of batchResults) {
       setCachedScore(r.id, r.score, r.reason);
     }
@@ -970,7 +978,7 @@ async function orchestrate(options) {
     throw new Error("\u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
   }
   onProgress == null ? void 0 : onProgress({ step: "fetch", message: `\u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587`, percent: 10 });
-  const scoredPapers = await scorePapers(apiKey, model, allPapers, language, onProgress);
+  const scoredPapers = await scorePapers(apiKey, model, allPapers, language, directions, onProgress);
   if (scoredPapers.length === 0) {
     throw new Error("\u8BBA\u6587\u8BC4\u5206\u5931\u8D25");
   }
@@ -988,7 +996,7 @@ async function orchestrate(options) {
       onProgress
     );
     if (crawledPapers.length > 0) {
-      const crawledScored = await scorePapers(apiKey, model, crawledPapers, language, onProgress);
+      const crawledScored = await scorePapers(apiKey, model, crawledPapers, language, directions, onProgress);
       allPapers.push(...crawledPapers);
       scoredPapers.push(...crawledScored);
       scoredPapers.sort((a, b) => b.score - a.score);
@@ -1134,7 +1142,8 @@ var DailyArticlePlugin = class extends import_obsidian4.Plugin {
         new import_obsidian4.Notice(`\u274C API \u8FDE\u63A5\u5931\u8D25: ${response.status} ${text.slice(0, 100)}`);
       }
     } catch (e) {
-      new import_obsidian4.Notice(`\u274C \u7F51\u7EDC\u9519\u8BEF: ${e.message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      new import_obsidian4.Notice(`\u274C \u7F51\u7EDC\u9519\u8BEF: ${msg}`);
     }
   }
   checkScheduledFetch() {
@@ -1216,8 +1225,9 @@ var DailyArticlePlugin = class extends import_obsidian4.Plugin {
       );
       return true;
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("DailyArticle fetch error:", e);
-      new import_obsidian4.Notice(`\u274C \u5904\u7406\u5931\u8D25: e.message`);
+      new import_obsidian4.Notice(`\u274C \u5904\u7406\u5931\u8D25: ${msg}`);
       return false;
     } finally {
       this.isFetching = false;

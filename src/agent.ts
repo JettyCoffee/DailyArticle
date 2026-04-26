@@ -90,8 +90,14 @@ async function callDeepSeekWithTools(
     return choice.message.tool_calls[0].function.arguments;
   }
 
-  // Fallback: if the model responded with plain text content (e.g., tools not supported)
+  // Fallback: if the model responded with plain text (tools not supported), validate JSON
   if (choice?.message?.content) {
+    // Validate it's parseable JSON — if not, throw so caller falls back to json_object mode
+    try {
+      JSON.parse(choice.message.content);
+    } catch {
+      throw new Error("DeepSeek returned non-JSON content, falling back to json_object mode");
+    }
     return choice.message.content;
   }
 
@@ -165,12 +171,13 @@ async function expandSearchQueries(
   directions: string[],
 ): Promise<string[]> {
   const systemPrompt =
-    "You are a research assistant that generates Arxiv search queries. " +
-    "Given research directions, produce 1-2 short queries per direction. " +
+    "You are a research assistant that generates precise Arxiv search queries. " +
+    "Given research directions, produce exactly ONE query per direction. " +
+    "CRITICAL: Each query must be DIRECTLY about the given direction — no tangential topics. " +
     "EVERY query MUST start with all: prefix. Use quotes for multi-word phrases. " +
-    "Keep queries broad and simple. Do NOT stack multiple AND conditions.";
+    "Include the most specific terms from the direction to ensure relevance.";
 
-  const userMessage = `Generate Arxiv search queries for:\n${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
+  const userMessage = `Generate one precise Arxiv search query for EACH direction:\n${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
 
   let content: string;
   try {
@@ -230,12 +237,16 @@ async function scorePaperBatch(
   model: string,
   batch: ArxivPaper[],
   language: string,
+  directions: string[],
 ): Promise<ScoredPaper[]> {
   const langHint = language === "zh-CN" ? "中文" : "English";
+  const directionList = directions.join(", ");
   const systemPrompt =
-    "You are a research paper reviewer. Score each paper 1-10 on novelty, " +
-    "impact, quality, and relevance. Be critical — most papers score 3-7. " +
-    `Write reasons in ${langHint}.`;
+    "You are a research paper reviewer. Score each paper 1-10 based on: " +
+    "(1) relevance to the specified research directions, " +
+    "(2) novelty, (3) impact, (4) quality. " +
+    "Relevance is the MOST important factor — only score high if the paper is clearly about one of the given directions. " +
+    `Write reasons in ${langHint}. Be critical — most papers score 3-5.`;
 
   const paperList = batch
     .map(
@@ -244,7 +255,7 @@ async function scorePaperBatch(
     )
     .join("\n---\n");
 
-  const userMessage = `Score these ${batch.length} papers:\n\n${paperList}`;
+  const userMessage = `Research directions: ${directionList}\n\nScore these ${batch.length} papers for relevance to the above directions:\n\n${paperList}`;
 
   let content: string;
   try {
@@ -268,6 +279,7 @@ async function scorePapers(
   model: string,
   papers: ArxivPaper[],
   language: string,
+  directions: string[],
   onProgress?: ProgressCallback,
 ): Promise<ScoredPaper[]> {
   if (papers.length === 0) return [];
@@ -302,7 +314,7 @@ async function scorePapers(
       percent: Math.round((i / toScore.length) * 80) + 10, // 10-90% range
     });
 
-    const batchResults = await scorePaperBatch(apiKey, model, batch, language);
+    const batchResults = await scorePaperBatch(apiKey, model, batch, language, directions);
     for (const r of batchResults) {
       setCachedScore(r.id, r.score, r.reason);
     }
@@ -532,8 +544,8 @@ export async function orchestrate(
 
   onProgress?.({ step: "fetch", message: `已获取 ${allPapers.length} 篇论文`, percent: 10 });
 
-  // Step 3: Score papers (batched)
-  const scoredPapers = await scorePapers(apiKey, model, allPapers, language, onProgress);
+  // Step 3: Score papers (batched) — pass directions for relevance evaluation
+  const scoredPapers = await scorePapers(apiKey, model, allPapers, language, directions, onProgress);
 
   if (scoredPapers.length === 0) {
     throw new Error("论文评分失败");
@@ -559,8 +571,8 @@ export async function orchestrate(
     );
 
     if (crawledPapers.length > 0) {
-      // Score new papers from crawling
-      const crawledScored = await scorePapers(apiKey, model, crawledPapers, language, onProgress);
+      // Score new papers from crawling — pass directions for relevance
+      const crawledScored = await scorePapers(apiKey, model, crawledPapers, language, directions, onProgress);
 
       // Merge and re-sort
       allPapers.push(...crawledPapers);

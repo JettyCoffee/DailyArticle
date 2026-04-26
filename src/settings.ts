@@ -24,7 +24,7 @@ export interface DailyArticleSettings {
 export const DEFAULT_SETTINGS: DailyArticleSettings = {
   deepseekApiKey: "",
   model: "deepseek-v4-flash",
-  researchDirections: "Agent\nReinforcement Learning\nGraphRAG\nLLM",
+  researchDirections: "Agent\nReinforcement Learning\n",
   fetchTime: "08:00",
   maxResultsPerDirection: 30,
   topN: 10,
