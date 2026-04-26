@@ -186,7 +186,8 @@ For each paper, provide:
 Return a JSON object with a "summaries" array:
 [{ "id": "paper_id", "summary": "concise summary in ${langHint}", "keyPoints": ["point 1", "point 2", ...] }]
 
-The summary should be informative and capture the essence of the paper. Key points should be specific and technical.`;
+The summary should be informative and capture the essence of the paper. Key points should be specific and technical.
+While in zh-CN, some technical terms can be left in English if they are commonly used in the research community.`;
 
   const paperList = papers
     .map(
