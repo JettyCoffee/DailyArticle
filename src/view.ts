@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, Setting, Notice } from "obsidian";
 import DailyArticlePlugin from "./main";
 import { MODEL_OPTIONS } from "./settings";
+import type { ProgressInfo } from "./agent";
 
 export const VIEW_TYPE = "daily-article-sidebar";
 
@@ -16,12 +17,16 @@ const TIME_PRESETS = [
 export class DailyArticleSidebarView extends ItemView {
   plugin: DailyArticlePlugin;
 
-  private statusEl: HTMLDivElement;
-  private directionDropdown: HTMLSelectElement;
-  private timePresetDropdown: HTMLSelectElement;
-  private dateStartInput: HTMLInputElement;
-  private dateEndInput: HTMLInputElement;
-  private dateRangeContainer: HTMLDivElement;
+  private statusEl!: HTMLDivElement;
+  private progressBarEl!: HTMLDivElement;
+  private progressFillEl!: HTMLDivElement;
+  private progressLabelEl!: HTMLSpanElement;
+  private searchBtn!: HTMLButtonElement;
+  private directionDropdown!: HTMLSelectElement;
+  private timePresetDropdown!: HTMLSelectElement;
+  private dateStartInput!: HTMLInputElement;
+  private dateEndInput!: HTMLInputElement;
+  private dateRangeContainer!: HTMLDivElement;
 
   constructor(leaf: WorkspaceLeaf, plugin: DailyArticlePlugin) {
     super(leaf);
@@ -41,7 +46,16 @@ export class DailyArticleSidebarView extends ItemView {
   }
 
   async onOpen() {
+    // Register progress handler
+    this.plugin.onProgress = (info: ProgressInfo) => {
+      this.updateProgress(info);
+    };
     this.render();
+  }
+
+  onClose(): Promise<void> {
+    this.plugin.onProgress = null;
+    return Promise.resolve();
   }
 
   private getDirections(): string[] {
@@ -131,7 +145,7 @@ export class DailyArticleSidebarView extends ItemView {
         });
       });
 
-    // Max results per direction + Top N side by side
+    // Max results per direction + Top N side by side (responsive)
     const rowDiv = settingsCard.createDiv("daily-article-setting-row");
     new Setting(rowDiv)
       .setName("每方向获取数")
@@ -175,16 +189,38 @@ export class DailyArticleSidebarView extends ItemView {
           });
       });
 
+    // ===== PaSa Crawler Toggle (new) =====
+    new Setting(settingsCard)
+      .setName("🔄 扩展引用链")
+      .setDesc("PaSa Agent 模式：自动从已找到的论文中扩展搜索更多相关论文（增加 API 调用）")
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.usePaSaCrawler);
+        toggle.onChange(async (value) => {
+          this.plugin.settings.usePaSaCrawler = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
     // ===== Action Card =====
     const actionCard = containerEl.createDiv("daily-article-card");
     actionCard.createEl("h3", { text: "▶️ 操作" });
 
-    new Setting(actionCard).addButton((button) => {
+    const btnSetting = new Setting(actionCard).addButton((button) => {
       button
         .setButtonText("搜索并生成报告")
         .setCta()
         .onClick(() => this.handleSearch());
     });
+
+    // Keep reference to the button element for loading state
+    this.searchBtn = btnSetting.controlEl.querySelector("button") as HTMLButtonElement;
+
+    // Progress bar
+    const progressContainer = actionCard.createDiv("daily-article-progress");
+    this.progressBarEl = progressContainer.createDiv("daily-article-progress-bar");
+    this.progressFillEl = progressContainer.createDiv("daily-article-progress-fill");
+    this.progressLabelEl = progressContainer.createSpan("daily-article-progress-label");
+    progressContainer.style.display = "none";
 
     // Status
     this.statusEl = actionCard.createDiv("daily-article-status");
@@ -222,7 +258,7 @@ export class DailyArticleSidebarView extends ItemView {
       const [sy, sm, sd] = startVal.split("-").map(Number);
       const [ey, em, ed] = endVal.split("-").map(Number);
       const start = new Date(sy, sm - 1, sd, 0, 0);
-      const end = new Date(ey, em - 1, ed + 1, 0, 0); // midnight of next day
+      const end = new Date(ey, em - 1, ed + 1, 0, 0);
       return { start, end };
     }
 
@@ -232,12 +268,51 @@ export class DailyArticleSidebarView extends ItemView {
     return { start, end };
   }
 
+  private setLoading(loading: boolean) {
+    if (!this.searchBtn) return;
+    if (loading) {
+      this.searchBtn.disabled = true;
+      this.searchBtn.innerHTML =
+        '<span class="daily-article-spinner"></span> 处理中...';
+    } else {
+      this.searchBtn.disabled = false;
+      this.searchBtn.textContent = "搜索并生成报告";
+    }
+  }
+
+  private updateProgress(info: ProgressInfo) {
+    if (!this.progressBarEl || !this.progressFillEl || !this.progressLabelEl) return;
+
+    const { step, message, percent } = info;
+
+    // Show progress container when actively processing
+    if (step !== "done" && step !== "error") {
+      this.progressBarEl.style.display = "flex";
+    }
+
+    this.progressLabelEl.textContent = message;
+    this.progressFillEl.style.width = `${Math.min(percent, 100)}%`;
+
+    // Color transitions
+    if (percent < 10) {
+      this.progressFillEl.style.background = "var(--interactive-accent)";
+    } else if (percent >= 90) {
+      this.progressFillEl.style.background = "var(--color-green)";
+    } else {
+      this.progressFillEl.style.background = "var(--interactive-accent)";
+    }
+
+    if (this.statusEl) {
+      this.statusEl.setText(message);
+    }
+  }
+
   private async handleSearch() {
     const selectedDirection = this.directionDropdown?.value;
     const { start, end } = this.getDateRange();
 
     if (!start || !end) {
-      return; // error notice already shown
+      return;
     }
 
     let directions: string[] | undefined;
@@ -245,14 +320,27 @@ export class DailyArticleSidebarView extends ItemView {
       directions = [selectedDirection];
     }
 
-    this.setStatus("🔄 正在搜索论文...");
-    const success = await this.plugin.fetchAndProcess(start, end, directions);
-    this.setStatus(success ? "✅ 完成" : "❌ 操作失败");
-  }
+    // Show progress on start
+    if (this.progressBarEl) {
+      this.progressBarEl.style.display = "flex";
+    }
+    this.updateProgress({ step: "query", message: "正在搜索论文...", percent: 0 });
+    this.setLoading(true);
 
-  private setStatus(text: string) {
-    if (this.statusEl) {
-      this.statusEl.setText(text);
+    const success = await this.plugin.fetchAndProcess(start, end, directions);
+
+    this.setLoading(false);
+    this.updateProgress({
+      step: "done",
+      message: success ? "✅ 完成" : "❌ 操作失败",
+      percent: success ? 100 : 0,
+    });
+
+    // Hide progress after a brief delay on success
+    if (success && this.progressBarEl) {
+      setTimeout(() => {
+        this.progressBarEl.style.display = "none";
+      }, 3000);
     }
   }
 }

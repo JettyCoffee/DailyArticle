@@ -17,6 +17,8 @@ export interface DailyArticleSettings {
   topN: number;
   outputFolder: string;
   outputLanguage: string;
+  usePaSaCrawler: boolean;
+  crawlerDepth: number;
 }
 
 export const DEFAULT_SETTINGS: DailyArticleSettings = {
@@ -28,6 +30,8 @@ export const DEFAULT_SETTINGS: DailyArticleSettings = {
   topN: 10,
   outputFolder: "DailyArticle",
   outputLanguage: "zh-CN",
+  usePaSaCrawler: false,
+  crawlerDepth: 1,
 };
 
 export class DailyArticleSettingTab extends PluginSettingTab {

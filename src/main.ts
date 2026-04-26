@@ -4,10 +4,10 @@ import {
   DEFAULT_SETTINGS,
   DailyArticleSettingTab,
 } from "./settings";
-import { fetchPapersByQueries, ArxivPaper } from "./arxiv";
-import { scorePapers, summarizePapers, expandSearchQueries, ScoredPaper, PaperSummary } from "./deepseek";
+import { ScoredPaper, PaperSummary } from "./deepseek";
 import { generateMarkdown, getOutputFilename } from "./output";
 import { DailyArticleSidebarView, VIEW_TYPE } from "./view";
+import { orchestrate, ProgressInfo } from "./agent";
 
 const GITHUB_REPO = "JettyCoffee/DailyArticle";
 
@@ -15,6 +15,8 @@ export default class DailyArticlePlugin extends Plugin {
   settings: DailyArticleSettings;
   private lastFetchDate: string = "";
   private isFetching = false;
+  /** Callback for UI to receive progress updates during fetch */
+  onProgress: ((info: ProgressInfo) => void) | null = null;
 
   async onload() {
     try {
@@ -164,7 +166,7 @@ export default class DailyArticlePlugin extends Plugin {
   }
 
   /**
-   * Fetch papers and generate a report.
+   * Fetch papers and generate a report using the OrchestratorAgent.
    * @param startDate - optional: start of date range for paper search
    * @param endDate - optional: end of date range for paper search
    * @param specificDirections - optional: only search these specific directions (default: all)
@@ -189,98 +191,30 @@ export default class DailyArticlePlugin extends Plugin {
 
     this.isFetching = true;
 
-    new Notice("🤖 Agent 正在分析研究方向并生成搜索查询...");
-
     try {
-      // Step 1: Agent expands research directions into search queries
-      let queries: string[];
-      try {
-        queries = await expandSearchQueries(
-          this.settings.deepseekApiKey,
-          this.settings.model,
-          directions
-        );
-        new Notice(`🔍 Agent 已生成 ${queries.length} 条搜索查询，正在获取论文...`);
-      } catch (e) {
-        // Fallback: use direction names directly as search queries
-        console.warn("Query expansion failed, using raw directions:", e);
-        queries = directions.map((d) => `all:${d}`);
-        new Notice(`🔍 直接搜索 ${queries.length} 个方向，正在获取论文...`);
-      }
-
-      // Step 2: Fetch papers from Arxiv using the generated queries
-      let allPapers = await fetchPapersByQueries(
-        queries,
-        this.settings.maxResultsPerDirection,
+      const result = await orchestrate({
+        apiKey: this.settings.deepseekApiKey,
+        model: this.settings.model,
+        directions,
+        maxResultsPerDirection: this.settings.maxResultsPerDirection,
+        topN: this.settings.topN,
+        language: this.settings.outputLanguage,
         startDate,
-        endDate
-      );
-
-      // If DeepSeek-generated queries are too specific for the date range,
-      // fall back to broader direction-name queries
-      if (allPapers.length === 0) {
-        console.warn("Generated queries returned no papers, retrying with raw direction queries");
-        const fallbackQueries = directions.map((d) => `all:${d}`);
-        allPapers = await fetchPapersByQueries(
-          fallbackQueries,
-          this.settings.maxResultsPerDirection,
-          startDate,
-          endDate
-        );
-        if (allPapers.length > 0) {
-          new Notice(`🔍 使用研究方向名直接搜索，已获取 ${allPapers.length} 篇论文`);
-        }
-      }
-
-      if (allPapers.length === 0) {
-        new Notice("⚠️ 该日期暂无相关论文");
-        return false;
-      }
-
-      new Notice(`📚 已获取 ${allPapers.length} 篇论文，正在评分...`);
-
-      // Step 3: Score papers via DeepSeek
-      const scoredPapers = await scorePapers(
-        this.settings.deepseekApiKey,
-        this.settings.model,
-        allPapers,
-        this.settings.outputLanguage
-      );
-
-      // Step 4: Select Top N
-      const topN = this.settings.topN;
-
-      // Map papers by id for quick lookup
-      const scoredMap = new Map<string, ScoredPaper>();
-      const paperMap = new Map<string, ArxivPaper>();
-      for (const sp of scoredPapers) {
-        scoredMap.set(sp.id, sp);
-      }
-      for (const p of allPapers) {
-        paperMap.set(p.id, p);
-      }
-
-      // Get top N papers in order
-      const topPapers: ArxivPaper[] = [];
-      for (const sp of scoredPapers.slice(0, topN)) {
-        const paper = paperMap.get(sp.id);
-        if (paper) {
-          topPapers.push(paper);
-        }
-      }
-
-      new Notice(`📝 正在生成 Top ${topPapers.length} 论文摘要...`);
-
-      // Step 5: Generate detailed summaries for top papers
-      const summaries = await summarizePapers(
-        this.settings.deepseekApiKey,
-        this.settings.model,
-        topPapers,
-        this.settings.outputLanguage
-      );
+        endDate,
+        usePaSaCrawler: this.settings.usePaSaCrawler,
+        crawlerDepth: this.settings.crawlerDepth,
+        onProgress: (info) => {
+          // Forward progress to UI
+          this.onProgress?.(info);
+        },
+      });
 
       // Merge scores and reasons into summaries
-      const enrichedSummaries: PaperSummary[] = summaries.map((s) => {
+      const scoredMap = new Map<string, ScoredPaper>();
+      for (const sp of result.scoredPapers) {
+        scoredMap.set(sp.id, sp);
+      }
+      const enrichedSummaries: PaperSummary[] = result.summaries.map((s) => {
         const scored = scoredMap.get(s.id);
         return {
           ...s,
@@ -289,11 +223,11 @@ export default class DailyArticlePlugin extends Plugin {
         };
       });
 
-      // Step 6: Generate and write the markdown file
+      // Generate and write the markdown file
       const markdown = generateMarkdown(
-        topPapers,
+        result.topPapers,
         enrichedSummaries,
-        allPapers.length,
+        result.allPapers.length,
         this.settings.outputLanguage,
         startDate
       );
@@ -301,16 +235,21 @@ export default class DailyArticlePlugin extends Plugin {
       await this.writeOutputFile(markdown, startDate);
 
       new Notice(
-        `✅ 日报已生成！共 ${allPapers.length} 篇，精选 Top ${topPapers.length}`
+        `✅ 日报已生成！共 ${result.allPapers.length} 篇，精选 Top ${result.topPapers.length}`
       );
 
       return true;
     } catch (e) {
       console.error("DailyArticle fetch error:", e);
-      new Notice(`❌ 处理失败: ${e.message}`);
+      new Notice(`❌ 处理失败: e.message`);
       return false;
     } finally {
       this.isFetching = false;
+      this.onProgress?.({
+        step: "done",
+        message: this.isFetching ? "已取消" : "就绪",
+        percent: 100,
+      });
     }
   }
 

@@ -44,7 +44,9 @@ var DEFAULT_SETTINGS = {
   maxResultsPerDirection: 30,
   topN: 10,
   outputFolder: "DailyArticle",
-  outputLanguage: "zh-CN"
+  outputLanguage: "zh-CN",
+  usePaSaCrawler: false,
+  crawlerDepth: 1
 };
 var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -140,245 +142,6 @@ var DailyArticleSettingTab = class extends import_obsidian.PluginSettingTab {
     });
   }
 };
-
-// src/arxiv.ts
-var import_obsidian2 = require("obsidian");
-function pad(n) {
-  return n.toString().padStart(2, "0");
-}
-function formatDate(date) {
-  const y = date.getFullYear();
-  const m = pad(date.getMonth() + 1);
-  const d = pad(date.getDate());
-  const hh = pad(date.getHours());
-  const mm = pad(date.getMinutes());
-  return `${y}${m}${d}${hh}${mm}`;
-}
-function truncate(str, maxLen) {
-  if (str.length <= maxLen)
-    return str;
-  return str.slice(0, maxLen) + "...";
-}
-function decodeXmlEntities(str) {
-  return str.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
-}
-function parseAtomXml(xml) {
-  var _a, _b, _c, _d, _e, _f;
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, "text/xml");
-  const entries = doc.querySelectorAll("entry");
-  const papers = [];
-  const totalResultsEl = doc.querySelector("totalResults") || doc.querySelector("opensearch\\:totalResults");
-  const totalResults = totalResultsEl ? parseInt(totalResultsEl.textContent || "0") : entries.length;
-  for (const entry of Array.from(entries)) {
-    const idEl = entry.querySelector("id");
-    const titleEl = entry.querySelector("title");
-    const summaryEl = entry.querySelector("summary");
-    const publishedEl = entry.querySelector("published");
-    const authorEls = entry.querySelectorAll("author name");
-    const authors = Array.from(authorEls).map(
-      (el) => el.textContent || ""
-    );
-    const linkEl = entry.querySelector("link[title='pdf']");
-    const link = linkEl ? linkEl.getAttribute("href") || "" : ((_a = idEl == null ? void 0 : idEl.textContent) == null ? void 0 : _a.replace("http:", "https:")) || "";
-    let catEl = entry.querySelector("primary_category") || entry.querySelector("arxiv\\:primary_category");
-    const category = catEl ? catEl.getAttribute("term") || "" : ((_b = entry.querySelector("category")) == null ? void 0 : _b.getAttribute("term")) || "";
-    const id = ((_c = idEl == null ? void 0 : idEl.textContent) == null ? void 0 : _c.trim()) || "";
-    const title = decodeXmlEntities(
-      (((_d = titleEl == null ? void 0 : titleEl.textContent) == null ? void 0 : _d.trim()) || "").replace(/\s+/g, " ")
-    );
-    const summary = decodeXmlEntities(
-      (((_e = summaryEl == null ? void 0 : summaryEl.textContent) == null ? void 0 : _e.trim()) || "").replace(/\s+/g, " ")
-    );
-    const published = ((_f = publishedEl == null ? void 0 : publishedEl.textContent) == null ? void 0 : _f.trim()) || "";
-    papers.push({ id, title, summary, authors, published, link, category });
-  }
-  return { entries: papers, totalResults };
-}
-async function queryArxiv(query, maxResults) {
-  const params = new URLSearchParams({
-    search_query: query,
-    start: "0",
-    max_results: String(maxResults),
-    sortBy: "submittedDate",
-    sortOrder: "descending"
-  });
-  const url = `https://export.arxiv.org/api/query?${params.toString()}`;
-  const response = await (0, import_obsidian2.requestUrl)({ url });
-  if (response.status >= 400) {
-    throw new Error(`Arxiv API error: ${response.status}`);
-  }
-  const xml = response.text;
-  return parseAtomXml(xml);
-}
-async function fetchPapersByQuery(queryString, maxResults, startDate, endDate) {
-  let dateRange;
-  if (startDate && endDate) {
-    dateRange = `submittedDate:[${formatDate(startDate)} TO ${formatDate(endDate)}]`;
-  } else {
-    const now = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
-    dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
-  }
-  const query = `${queryString} AND ${dateRange}`;
-  const result = await queryArxiv(query, maxResults);
-  return result.entries;
-}
-async function fetchPapersByQueries(queries, maxResultsPerQuery, startDate, endDate) {
-  var _a;
-  const seen = /* @__PURE__ */ new Set();
-  const allPapers = [];
-  for (const query of queries) {
-    try {
-      const papers = await fetchPapersByQuery(query, maxResultsPerQuery, startDate, endDate);
-      for (const paper of papers) {
-        if (!seen.has(paper.id)) {
-          seen.add(paper.id);
-          allPapers.push(paper);
-        }
-      }
-    } catch (e) {
-      console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
-      new import_obsidian2.Notice(`\u26A0\uFE0F arXiv \u8BF7\u6C42\u9519\u8BEF: ${(_a = e.message) == null ? void 0 : _a.slice(0, 100)}`, 6e3);
-    }
-  }
-  return allPapers;
-}
-function preparePaperForScoring(papers) {
-  return papers.map((p) => ({
-    id: p.id,
-    title: p.title,
-    summary: truncate(p.summary, 300)
-  }));
-}
-
-// src/deepseek.ts
-var DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-async function callDeepSeek(apiKey, model, systemPrompt, userMessage) {
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userMessage }
-  ];
-  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      response_format: { type: "json_object" },
-      temperature: 0.3,
-      max_tokens: 4096
-    })
-  });
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(
-      `DeepSeek API error: ${response.status} ${response.statusText}
-${errorBody}`
-    );
-  }
-  const data = await response.json();
-  return data.choices[0].message.content;
-}
-async function expandSearchQueries(apiKey, model, directions) {
-  const systemPrompt = `You are an AI research assistant that helps search academic papers on Arxiv.
-Given a list of research directions from a user, generate optimized search queries for the Arxiv API.
-
-Rules:
-- EVERY query MUST start with \`all:\` prefix (this searches title + abstract)
-- For each direction, generate 1-2 alternative search terms/phrases
-- Use OR between alternatives for the same direction (broader = better)
-- Use quotes for multi-word phrases, like \`all:"multi-agent systems"\`
-- Keep queries short and broad \u2014 avoid stacking multiple AND conditions
-- Focus on recent AI/ML research terminology
-
-CRITICAL: Each query must begin with "all:". Examples of GOOD queries:
-  - all:Agent
-  - all:"reinforcement learning"
-  - all:"large language model"
-  - all:"graph RAG" OR all:"knowledge graph"
-
-Return a JSON object:
-{ "queries": ["query1", "query2", ...] }`;
-  const userMessage = `Generate Arxiv search queries for these research directions:
-${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
-  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
-  const result = JSON.parse(content);
-  if (!result.queries || !Array.isArray(result.queries)) {
-    throw new Error("Query expansion failed: missing 'queries' array");
-  }
-  return result.queries.map((q) => {
-    const trimmed = q.trim();
-    if (trimmed.startsWith("all:") || trimmed.startsWith("cat:"))
-      return trimmed;
-    return `all:${trimmed}`;
-  });
-}
-async function scorePapers(apiKey, model, papers, language) {
-  const prepared = preparePaperForScoring(papers);
-  const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
-  const systemPrompt = `You are an AI research assistant that evaluates Arxiv papers. Score each paper on a scale of 1-10 based on:
-- Novelty and significance of the contribution
-- Potential impact on the field
-- Quality of the research
-- Relevance to current AI/ML trends
-
-Return a JSON object with a "papers" array: [{ "id": "paper_id", "score": number, "reason": "brief explanation in ${langHint}" }]
-
-Score guidelines:
-- 9-10: Breakthrough, highly novel work
-- 7-8: Strong contribution, solid results
-- 5-6: Incremental but solid work
-- 1-4: Marginal relevance or minor contribution
-
-Be critical and discerning. Not every paper deserves a high score.`;
-  const paperList = prepared.map(
-    (p, i) => `[${i + 1}] ID: ${p.id}
-Title: ${p.title}
-Abstract: ${p.summary}`
-  ).join("\n---\n");
-  const userMessage = `Please score the following ${prepared.length} papers:
-
-${paperList}`;
-  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
-  const result = JSON.parse(content);
-  if (!result.papers || !Array.isArray(result.papers)) {
-    throw new Error("Unexpected DeepSeek response format: missing 'papers' array");
-  }
-  const scored = result.papers;
-  scored.sort((a, b) => b.score - a.score);
-  return scored;
-}
-async function summarizePapers(apiKey, model, papers, language) {
-  const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
-  const systemPrompt = `You are an AI research assistant. Generate a detailed analysis for each paper in ${langHint}.
-For each paper, provide:
-1. A concise summary (2-3 sentences) of what the paper does
-2. 3-5 key bullet points highlighting the main contributions, methods, or findings
-
-Return a JSON object with a "summaries" array:
-[{ "id": "paper_id", "summary": "concise summary in ${langHint}", "keyPoints": ["point 1", "point 2", ...] }]
-
-The summary should be informative and capture the essence of the paper. Key points should be specific and technical.`;
-  const paperList = papers.map(
-    (p, i) => `[${i + 1}] ID: ${p.id}
-Title: ${p.title}
-Authors: ${p.authors.join(", ")}
-Abstract: ${p.summary}`
-  ).join("\n---\n");
-  const userMessage = `Generate detailed summaries for the following ${papers.length} papers:
-
-${paperList}`;
-  const content = await callDeepSeek(apiKey, model, systemPrompt, userMessage);
-  const result = JSON.parse(content);
-  if (!result.summaries || !Array.isArray(result.summaries)) {
-    throw new Error("Unexpected DeepSeek response format: missing 'summaries' array");
-  }
-  return result.summaries;
-}
 
 // src/output.ts
 function getDateString(date) {
@@ -527,7 +290,7 @@ function getOutputFilename(date) {
 }
 
 // src/view.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 var VIEW_TYPE = "daily-article-sidebar";
 var TIME_PRESETS = [
   { label: "\u6700\u8FD1 24 \u5C0F\u65F6", days: 1 },
@@ -536,7 +299,7 @@ var TIME_PRESETS = [
   { label: "\u6700\u8FD1 30 \u5929", days: 30 },
   { label: "\u81EA\u5B9A\u4E49\u8303\u56F4", days: -1 }
 ];
-var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
+var DailyArticleSidebarView = class extends import_obsidian2.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -551,7 +314,14 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     return "search";
   }
   async onOpen() {
+    this.plugin.onProgress = (info) => {
+      this.updateProgress(info);
+    };
     this.render();
+  }
+  onClose() {
+    this.plugin.onProgress = null;
+    return Promise.resolve();
   }
   getDirections() {
     return this.plugin.settings.researchDirections.split("\n").map((d) => d.trim()).filter((d) => d.length > 0);
@@ -564,7 +334,7 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     header.createEl("h2", { text: "DailyArticle" });
     const dateCard = containerEl.createDiv("daily-article-card");
     dateCard.createEl("h3", { text: "\u{1F4C5} \u641C\u7D22\u65F6\u95F4\u8303\u56F4" });
-    new import_obsidian3.Setting(dateCard).setName("\u9009\u62E9\u8303\u56F4").addDropdown((dropdown) => {
+    new import_obsidian2.Setting(dateCard).setName("\u9009\u62E9\u8303\u56F4").addDropdown((dropdown) => {
       for (const preset of TIME_PRESETS) {
         dropdown.addOption(String(preset.days), preset.label);
       }
@@ -574,12 +344,12 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     });
     this.dateRangeContainer = dateCard.createDiv("daily-article-date-range");
     this.dateRangeContainer.style.display = "none";
-    new import_obsidian3.Setting(this.dateRangeContainer).setName("\u8D77\u59CB\u65E5\u671F").addText((text) => {
+    new import_obsidian2.Setting(this.dateRangeContainer).setName("\u8D77\u59CB\u65E5\u671F").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.getDefaultDateStr(-7));
       this.dateStartInput = text.inputEl;
     });
-    new import_obsidian3.Setting(this.dateRangeContainer).setName("\u7ED3\u675F\u65E5\u671F").addText((text) => {
+    new import_obsidian2.Setting(this.dateRangeContainer).setName("\u7ED3\u675F\u65E5\u671F").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.getDefaultDateStr(0));
       this.dateEndInput = text.inputEl;
@@ -588,7 +358,7 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     dirCard.createEl("h3", { text: "\u{1F50D} \u7814\u7A76\u65B9\u5411" });
     const directions = this.getDirections();
     if (directions.length > 0) {
-      new import_obsidian3.Setting(dirCard).setName("\u8FC7\u6EE4\u65B9\u5411").addDropdown((dropdown) => {
+      new import_obsidian2.Setting(dirCard).setName("\u8FC7\u6EE4\u65B9\u5411").addDropdown((dropdown) => {
         dropdown.addOption("all", "\u6240\u6709\u65B9\u5411");
         for (const dir of directions) {
           dropdown.addOption(dir, dir);
@@ -599,7 +369,7 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     }
     const settingsCard = containerEl.createDiv("daily-article-card");
     settingsCard.createEl("h3", { text: "\u2699\uFE0F \u641C\u7D22\u53C2\u6570" });
-    new import_obsidian3.Setting(settingsCard).setName("DeepSeek \u6A21\u578B").addDropdown((dropdown) => {
+    new import_obsidian2.Setting(settingsCard).setName("DeepSeek \u6A21\u578B").addDropdown((dropdown) => {
       for (const [value, label] of Object.entries(MODEL_OPTIONS)) {
         dropdown.addOption(value, label);
       }
@@ -610,7 +380,7 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
       });
     });
     const rowDiv = settingsCard.createDiv("daily-article-setting-row");
-    new import_obsidian3.Setting(rowDiv).setName("\u6BCF\u65B9\u5411\u83B7\u53D6\u6570").addText((text) => {
+    new import_obsidian2.Setting(rowDiv).setName("\u6BCF\u65B9\u5411\u83B7\u53D6\u6570").addText((text) => {
       text.setPlaceholder("30").setValue(String(this.plugin.settings.maxResultsPerDirection)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -619,7 +389,7 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
         }
       });
     });
-    new import_obsidian3.Setting(rowDiv).setName("\u7CBE\u9009\u6570\u91CF").addText((text) => {
+    new import_obsidian2.Setting(rowDiv).setName("\u7CBE\u9009\u6570\u91CF").addText((text) => {
       text.setPlaceholder("10").setValue(String(this.plugin.settings.topN)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -628,17 +398,30 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
         }
       });
     });
-    new import_obsidian3.Setting(settingsCard).setName("\u8F93\u51FA\u8BED\u8A00").addDropdown((dropdown) => {
+    new import_obsidian2.Setting(settingsCard).setName("\u8F93\u51FA\u8BED\u8A00").addDropdown((dropdown) => {
       dropdown.addOption("zh-CN", "\u4E2D\u6587").addOption("en", "English").setValue(this.plugin.settings.outputLanguage).onChange(async (value) => {
         this.plugin.settings.outputLanguage = value;
         await this.plugin.saveSettings();
       });
     });
+    new import_obsidian2.Setting(settingsCard).setName("\u{1F504} \u6269\u5C55\u5F15\u7528\u94FE").setDesc("PaSa Agent \u6A21\u5F0F\uFF1A\u81EA\u52A8\u4ECE\u5DF2\u627E\u5230\u7684\u8BBA\u6587\u4E2D\u6269\u5C55\u641C\u7D22\u66F4\u591A\u76F8\u5173\u8BBA\u6587\uFF08\u589E\u52A0 API \u8C03\u7528\uFF09").addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.usePaSaCrawler);
+      toggle.onChange(async (value) => {
+        this.plugin.settings.usePaSaCrawler = value;
+        await this.plugin.saveSettings();
+      });
+    });
     const actionCard = containerEl.createDiv("daily-article-card");
     actionCard.createEl("h3", { text: "\u25B6\uFE0F \u64CD\u4F5C" });
-    new import_obsidian3.Setting(actionCard).addButton((button) => {
+    const btnSetting = new import_obsidian2.Setting(actionCard).addButton((button) => {
       button.setButtonText("\u641C\u7D22\u5E76\u751F\u6210\u62A5\u544A").setCta().onClick(() => this.handleSearch());
     });
+    this.searchBtn = btnSetting.controlEl.querySelector("button");
+    const progressContainer = actionCard.createDiv("daily-article-progress");
+    this.progressBarEl = progressContainer.createDiv("daily-article-progress-bar");
+    this.progressFillEl = progressContainer.createDiv("daily-article-progress-fill");
+    this.progressLabelEl = progressContainer.createSpan("daily-article-progress-label");
+    progressContainer.style.display = "none";
     this.statusEl = actionCard.createDiv("daily-article-status");
     this.statusEl.setText("\u5C31\u7EEA");
   }
@@ -665,7 +448,7 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
       const startVal = (_b = this.dateStartInput) == null ? void 0 : _b.value;
       const endVal = (_c = this.dateEndInput) == null ? void 0 : _c.value;
       if (!startVal || !endVal) {
-        new import_obsidian3.Notice("\u274C \u8BF7\u9009\u62E9\u8D77\u6B62\u65E5\u671F");
+        new import_obsidian2.Notice("\u274C \u8BF7\u9009\u62E9\u8D77\u6B62\u65E5\u671F");
         return {};
       }
       const [sy, sm, sd] = startVal.split("-").map(Number);
@@ -678,6 +461,37 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     const start = new Date(end.getTime() - presetDays * 24 * 60 * 60 * 1e3);
     return { start, end };
   }
+  setLoading(loading) {
+    if (!this.searchBtn)
+      return;
+    if (loading) {
+      this.searchBtn.disabled = true;
+      this.searchBtn.innerHTML = '<span class="daily-article-spinner"></span> \u5904\u7406\u4E2D...';
+    } else {
+      this.searchBtn.disabled = false;
+      this.searchBtn.textContent = "\u641C\u7D22\u5E76\u751F\u6210\u62A5\u544A";
+    }
+  }
+  updateProgress(info) {
+    if (!this.progressBarEl || !this.progressFillEl || !this.progressLabelEl)
+      return;
+    const { step, message, percent } = info;
+    if (step !== "done" && step !== "error") {
+      this.progressBarEl.style.display = "flex";
+    }
+    this.progressLabelEl.textContent = message;
+    this.progressFillEl.style.width = `${Math.min(percent, 100)}%`;
+    if (percent < 10) {
+      this.progressFillEl.style.background = "var(--interactive-accent)";
+    } else if (percent >= 90) {
+      this.progressFillEl.style.background = "var(--color-green)";
+    } else {
+      this.progressFillEl.style.background = "var(--interactive-accent)";
+    }
+    if (this.statusEl) {
+      this.statusEl.setText(message);
+    }
+  }
   async handleSearch() {
     var _a;
     const selectedDirection = (_a = this.directionDropdown) == null ? void 0 : _a.value;
@@ -689,16 +503,528 @@ var DailyArticleSidebarView = class extends import_obsidian3.ItemView {
     if (selectedDirection && selectedDirection !== "all") {
       directions = [selectedDirection];
     }
-    this.setStatus("\u{1F504} \u6B63\u5728\u641C\u7D22\u8BBA\u6587...");
+    if (this.progressBarEl) {
+      this.progressBarEl.style.display = "flex";
+    }
+    this.updateProgress({ step: "query", message: "\u6B63\u5728\u641C\u7D22\u8BBA\u6587...", percent: 0 });
+    this.setLoading(true);
     const success = await this.plugin.fetchAndProcess(start, end, directions);
-    this.setStatus(success ? "\u2705 \u5B8C\u6210" : "\u274C \u64CD\u4F5C\u5931\u8D25");
-  }
-  setStatus(text) {
-    if (this.statusEl) {
-      this.statusEl.setText(text);
+    this.setLoading(false);
+    this.updateProgress({
+      step: "done",
+      message: success ? "\u2705 \u5B8C\u6210" : "\u274C \u64CD\u4F5C\u5931\u8D25",
+      percent: success ? 100 : 0
+    });
+    if (success && this.progressBarEl) {
+      setTimeout(() => {
+        this.progressBarEl.style.display = "none";
+      }, 3e3);
     }
   }
 };
+
+// src/arxiv.ts
+var import_obsidian3 = require("obsidian");
+function pad(n) {
+  return n.toString().padStart(2, "0");
+}
+function formatDate(date) {
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  return `${y}${m}${d}${hh}${mm}`;
+}
+function decodeXmlEntities(str) {
+  return str.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+}
+function parseAtomXml(xml) {
+  var _a, _b, _c, _d, _e, _f;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xml, "text/xml");
+  const entries = doc.querySelectorAll("entry");
+  const papers = [];
+  const totalResultsEl = doc.querySelector("totalResults") || doc.querySelector("opensearch\\:totalResults");
+  const totalResults = totalResultsEl ? parseInt(totalResultsEl.textContent || "0") : entries.length;
+  for (const entry of Array.from(entries)) {
+    const idEl = entry.querySelector("id");
+    const titleEl = entry.querySelector("title");
+    const summaryEl = entry.querySelector("summary");
+    const publishedEl = entry.querySelector("published");
+    const authorEls = entry.querySelectorAll("author name");
+    const authors = Array.from(authorEls).map(
+      (el) => el.textContent || ""
+    );
+    const linkEl = entry.querySelector("link[title='pdf']");
+    const link = linkEl ? linkEl.getAttribute("href") || "" : ((_a = idEl == null ? void 0 : idEl.textContent) == null ? void 0 : _a.replace("http:", "https:")) || "";
+    let catEl = entry.querySelector("primary_category") || entry.querySelector("arxiv\\:primary_category");
+    const category = catEl ? catEl.getAttribute("term") || "" : ((_b = entry.querySelector("category")) == null ? void 0 : _b.getAttribute("term")) || "";
+    const id = ((_c = idEl == null ? void 0 : idEl.textContent) == null ? void 0 : _c.trim()) || "";
+    const title = decodeXmlEntities(
+      (((_d = titleEl == null ? void 0 : titleEl.textContent) == null ? void 0 : _d.trim()) || "").replace(/\s+/g, " ")
+    );
+    const summary = decodeXmlEntities(
+      (((_e = summaryEl == null ? void 0 : summaryEl.textContent) == null ? void 0 : _e.trim()) || "").replace(/\s+/g, " ")
+    );
+    const published = ((_f = publishedEl == null ? void 0 : publishedEl.textContent) == null ? void 0 : _f.trim()) || "";
+    papers.push({ id, title, summary, authors, published, link, category });
+  }
+  return { entries: papers, totalResults };
+}
+async function queryArxiv(query, maxResults) {
+  const params = new URLSearchParams({
+    search_query: query,
+    start: "0",
+    max_results: String(maxResults),
+    sortBy: "submittedDate",
+    sortOrder: "descending"
+  });
+  const url = `https://export.arxiv.org/api/query?${params.toString()}`;
+  const response = await (0, import_obsidian3.requestUrl)({ url });
+  if (response.status >= 400) {
+    throw new Error(`Arxiv API error: ${response.status}`);
+  }
+  const xml = response.text;
+  return parseAtomXml(xml);
+}
+async function fetchPapersByQuery(queryString, maxResults, startDate, endDate) {
+  let dateRange;
+  if (startDate && endDate) {
+    dateRange = `submittedDate:[${formatDate(startDate)} TO ${formatDate(endDate)}]`;
+  } else {
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
+    dateRange = `submittedDate:[${formatDate(yesterday)} TO ${formatDate(now)}]`;
+  }
+  const query = `${queryString} AND ${dateRange}`;
+  const result = await queryArxiv(query, maxResults);
+  return result.entries;
+}
+async function fetchPapersByQueries(queries, maxResultsPerQuery, startDate, endDate) {
+  var _a;
+  const seen = /* @__PURE__ */ new Set();
+  const allPapers = [];
+  for (const query of queries) {
+    try {
+      const papers = await fetchPapersByQuery(query, maxResultsPerQuery, startDate, endDate);
+      for (const paper of papers) {
+        if (!seen.has(paper.id)) {
+          seen.add(paper.id);
+          allPapers.push(paper);
+        }
+      }
+    } catch (e) {
+      console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
+      new import_obsidian3.Notice(`\u26A0\uFE0F arXiv \u8BF7\u6C42\u9519\u8BEF: ${(_a = e.message) == null ? void 0 : _a.slice(0, 100)}`, 6e3);
+    }
+  }
+  return allPapers;
+}
+
+// src/agent.ts
+var scoringCache = /* @__PURE__ */ new Map();
+function getCachedScore(id) {
+  return scoringCache.get(id);
+}
+function setCachedScore(id, score, reason) {
+  scoringCache.set(id, { score, reason });
+}
+var DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+async function callDeepSeekWithTools(apiKey, model, systemPrompt, userMessage, tools) {
+  var _a, _b, _c, _d, _e, _f;
+  const body = {
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage }
+    ],
+    tools,
+    tool_choice: "required",
+    temperature: 0.3,
+    max_tokens: 4096
+  };
+  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(
+      `DeepSeek API error: ${response.status} ${response.statusText}
+${errorBody}`
+    );
+  }
+  const data = await response.json();
+  const choice = (_a = data.choices) == null ? void 0 : _a[0];
+  if ((_e = (_d = (_c = (_b = choice == null ? void 0 : choice.message) == null ? void 0 : _b.tool_calls) == null ? void 0 : _c[0]) == null ? void 0 : _d.function) == null ? void 0 : _e.arguments) {
+    return choice.message.tool_calls[0].function.arguments;
+  }
+  if ((_f = choice == null ? void 0 : choice.message) == null ? void 0 : _f.content) {
+    return choice.message.content;
+  }
+  throw new Error("Unexpected DeepSeek response: no tool_calls or content");
+}
+async function callDeepSeekJson(apiKey, model, systemPrompt, userMessage) {
+  const body = {
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage }
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.3,
+    max_tokens: 4096
+  };
+  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(
+      `DeepSeek API error: ${response.status} ${response.statusText}
+${errorBody}`
+    );
+  }
+  const data = await response.json();
+  return data.choices[0].message.content;
+}
+var QUERY_TOOL = {
+  type: "function",
+  function: {
+    name: "submit_queries",
+    description: "Submit Arxiv search queries",
+    parameters: {
+      type: "object",
+      properties: {
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of Arxiv search queries, each starting with all: prefix"
+        }
+      },
+      required: ["queries"],
+      additionalProperties: false
+    }
+  }
+};
+async function expandSearchQueries(apiKey, model, directions) {
+  const systemPrompt = "You are a research assistant that generates Arxiv search queries. Given research directions, produce 1-2 short queries per direction. EVERY query MUST start with all: prefix. Use quotes for multi-word phrases. Keep queries broad and simple. Do NOT stack multiple AND conditions.";
+  const userMessage = `Generate Arxiv search queries for:
+${directions.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
+  let content;
+  try {
+    content = await callDeepSeekWithTools(apiKey, model, systemPrompt, userMessage, [QUERY_TOOL]);
+  } catch (e) {
+    const fallbackPrompt = systemPrompt + '\n\nReturn a JSON object: { "queries": ["..."] }';
+    content = await callDeepSeekJson(apiKey, model, fallbackPrompt, userMessage);
+  }
+  const result = JSON.parse(content);
+  if (!result.queries || !Array.isArray(result.queries)) {
+    throw new Error("Query expansion failed: missing 'queries' array");
+  }
+  return result.queries.map((q) => {
+    const t = q.trim();
+    if (t.startsWith("all:") || t.startsWith("cat:"))
+      return t;
+    return `all:${t}`;
+  });
+}
+var SCORE_BATCH_SIZE = 20;
+var SCORE_TOOL = {
+  type: "function",
+  function: {
+    name: "submit_paper_scores",
+    description: "Submit scored paper evaluations",
+    parameters: {
+      type: "object",
+      properties: {
+        papers: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Paper ID" },
+              score: { type: "number", description: "Score 1-10" },
+              reason: { type: "string", description: "Brief reason for the score" }
+            },
+            required: ["id", "score", "reason"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["papers"],
+      additionalProperties: false
+    }
+  }
+};
+async function scorePaperBatch(apiKey, model, batch, language) {
+  const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
+  const systemPrompt = `You are a research paper reviewer. Score each paper 1-10 on novelty, impact, quality, and relevance. Be critical \u2014 most papers score 3-7. Write reasons in ${langHint}.`;
+  const paperList = batch.map(
+    (p, i) => `[${i + 1}] ID: ${p.id}
+Title: ${p.title}
+Abstract: ${p.summary}`
+  ).join("\n---\n");
+  const userMessage = `Score these ${batch.length} papers:
+
+${paperList}`;
+  let content;
+  try {
+    content = await callDeepSeekWithTools(apiKey, model, systemPrompt, userMessage, [SCORE_TOOL]);
+  } catch (e) {
+    const fallbackPrompt = systemPrompt + '\n\nReturn JSON: { "papers": [{ "id": "...", "score": 0, "reason": "..." }] }';
+    content = await callDeepSeekJson(apiKey, model, fallbackPrompt, userMessage);
+  }
+  const result = JSON.parse(content);
+  if (!result.papers || !Array.isArray(result.papers)) {
+    throw new Error("Scoring failed: missing 'papers' array");
+  }
+  return result.papers;
+}
+async function scorePapers(apiKey, model, papers, language, onProgress) {
+  if (papers.length === 0)
+    return [];
+  const toScore = [];
+  const cachedResults = [];
+  for (const p of papers) {
+    const cached = getCachedScore(p.id);
+    if (cached) {
+      cachedResults.push({ id: p.id, ...cached });
+    } else {
+      toScore.push(p);
+    }
+  }
+  if (toScore.length === 0) {
+    return cachedResults.sort((a, b) => b.score - a.score);
+  }
+  const allScored = [...cachedResults];
+  const totalBatches = Math.ceil(toScore.length / SCORE_BATCH_SIZE);
+  for (let i = 0; i < toScore.length; i += SCORE_BATCH_SIZE) {
+    const batch = toScore.slice(i, i + SCORE_BATCH_SIZE);
+    const batchNum = Math.floor(i / SCORE_BATCH_SIZE) + 1;
+    onProgress == null ? void 0 : onProgress({
+      step: "score",
+      message: `\u8BC4\u5206\u4E2D... \u7B2C ${batchNum}/${totalBatches} \u6279 (${Math.min(i + SCORE_BATCH_SIZE, toScore.length)}/${toScore.length} \u7BC7)`,
+      percent: Math.round(i / toScore.length * 80) + 10
+      // 10-90% range
+    });
+    const batchResults = await scorePaperBatch(apiKey, model, batch, language);
+    for (const r of batchResults) {
+      setCachedScore(r.id, r.score, r.reason);
+    }
+    allScored.push(...batchResults);
+  }
+  return allScored.sort((a, b) => b.score - a.score);
+}
+var SUMMARY_TOOL = {
+  type: "function",
+  function: {
+    name: "submit_paper_summaries",
+    description: "Submit detailed paper summaries",
+    parameters: {
+      type: "object",
+      properties: {
+        summaries: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Paper ID" },
+              summary: { type: "string", description: "2-3 sentence summary" },
+              keyPoints: {
+                type: "array",
+                items: { type: "string" },
+                description: "3-5 key bullet points"
+              }
+            },
+            required: ["id", "summary", "keyPoints"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["summaries"],
+      additionalProperties: false
+    }
+  }
+};
+async function summarizePapers(apiKey, model, papers, language, onProgress) {
+  if (papers.length === 0)
+    return [];
+  const langHint = language === "zh-CN" ? "\u4E2D\u6587" : "English";
+  const systemPrompt = `You are a research paper analyst. Generate concise summaries and key points in ${langHint}. Summaries should be 2-3 sentences capturing the essence. Key points should be 3-5 specific technical bullet points. Keep technical terms in English when commonly used.`;
+  const paperList = papers.map(
+    (p, i) => `[${i + 1}] ID: ${p.id}
+Title: ${p.title}
+Authors: ${p.authors.join(", ")}
+Abstract: ${p.summary}`
+  ).join("\n---\n");
+  const userMessage = `Summarize these ${papers.length} papers:
+
+${paperList}`;
+  onProgress == null ? void 0 : onProgress({ step: "summarize", message: "\u6B63\u5728\u751F\u6210\u6458\u8981...", percent: 90 });
+  let content;
+  try {
+    content = await callDeepSeekWithTools(apiKey, model, systemPrompt, userMessage, [SUMMARY_TOOL]);
+  } catch (e) {
+    const fallbackPrompt = systemPrompt + '\n\nReturn JSON: { "summaries": [{ "id": "...", "summary": "...", "keyPoints": ["..."] }] }';
+    content = await callDeepSeekJson(apiKey, model, fallbackPrompt, userMessage);
+  }
+  const result = JSON.parse(content);
+  if (!result.summaries || !Array.isArray(result.summaries)) {
+    throw new Error("Summarization failed: missing 'summaries' array");
+  }
+  return result.summaries;
+}
+var CRAWL_TOOL = {
+  type: "function",
+  function: {
+    name: "submit_crawl_queries",
+    description: "Submit expanded search queries based on discovered papers",
+    parameters: {
+      type: "object",
+      properties: {
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          description: "Additional Arxiv search queries with all: prefix"
+        }
+      },
+      required: ["queries"],
+      additionalProperties: false
+    }
+  }
+};
+async function crawlReferences(apiKey, model, topPapers, maxResultsPerQuery, startDate, endDate, onProgress) {
+  onProgress == null ? void 0 : onProgress({ step: "crawl", message: "PaSa Agent \u6B63\u5728\u5206\u6790\u8BBA\u6587\u5E76\u6269\u5C55\u641C\u7D22...", percent: 5 });
+  const keywordHints = topPapers.slice(0, 5).map((p) => p.title.replace(/[^a-zA-Z0-9\s]/g, "").slice(0, 80)).join("\n");
+  const systemPrompt = "You are a paper search agent (PaSa Crawler). Given top papers found, generate ADDITIONAL Arxiv search queries to find RELATED but DIFFERENT papers that cite similar concepts. Generate 2-4 queries. CRITICAL: Each query must start with all: prefix. Avoid duplicating existing searches.";
+  const userMessage = `Top papers found:
+${keywordHints}
+
+Generate additional search queries to find more relevant papers.`;
+  let content;
+  try {
+    content = await callDeepSeekWithTools(apiKey, model, systemPrompt, userMessage, [CRAWL_TOOL]);
+  } catch (e) {
+    const fallbackPrompt = systemPrompt + '\n\nReturn JSON: { "queries": ["all:...", "all:..."] }';
+    content = await callDeepSeekJson(apiKey, model, fallbackPrompt, userMessage);
+  }
+  const result = JSON.parse(content);
+  if (!result.queries || !Array.isArray(result.queries)) {
+    return [];
+  }
+  const queries = result.queries.map((q) => {
+    const t = q.trim();
+    return t.startsWith("all:") || t.startsWith("cat:") ? t : `all:${t}`;
+  });
+  onProgress == null ? void 0 : onProgress({ step: "crawl", message: `PaSa Agent \u6B63\u5728\u641C\u7D22 ${queries.length} \u4E2A\u6269\u5C55\u67E5\u8BE2...`, percent: 30 });
+  const newPapers = await fetchPapersByQueries(queries, maxResultsPerQuery, startDate, endDate);
+  onProgress == null ? void 0 : onProgress({
+    step: "crawl",
+    message: `PaSa Agent \u6269\u5C55\u627E\u5230 ${newPapers.length} \u7BC7\u989D\u5916\u8BBA\u6587`,
+    percent: 60
+  });
+  return newPapers;
+}
+async function orchestrate(options) {
+  const {
+    apiKey,
+    model,
+    directions,
+    maxResultsPerDirection,
+    topN,
+    language,
+    startDate,
+    endDate,
+    usePaSaCrawler = false,
+    onProgress
+  } = options;
+  onProgress == null ? void 0 : onProgress({ step: "query", message: "Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...", percent: 0 });
+  let queries;
+  try {
+    queries = await expandSearchQueries(apiKey, model, directions);
+    onProgress == null ? void 0 : onProgress({ step: "query", message: `\u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2`, percent: 5 });
+  } catch (e) {
+    console.warn("Query expansion failed, using raw directions:", e);
+    queries = directions.map((d) => `all:${d}`);
+    onProgress == null ? void 0 : onProgress({ step: "query", message: `\u76F4\u63A5\u4F7F\u7528 ${queries.length} \u4E2A\u65B9\u5411\u540D\u79F0\u641C\u7D22`, percent: 5 });
+  }
+  onProgress == null ? void 0 : onProgress({ step: "fetch", message: "\u6B63\u5728\u4ECE arXiv \u83B7\u53D6\u8BBA\u6587...", percent: 5 });
+  let allPapers = await fetchPapersByQueries(queries, maxResultsPerDirection, startDate, endDate);
+  if (allPapers.length === 0) {
+    console.warn("Generated queries returned no papers, retrying with raw direction queries");
+    const fallbackQueries = directions.map((d) => `all:${d}`);
+    allPapers = await fetchPapersByQueries(fallbackQueries, maxResultsPerDirection, startDate, endDate);
+  }
+  if (allPapers.length === 0) {
+    throw new Error("\u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
+  }
+  onProgress == null ? void 0 : onProgress({ step: "fetch", message: `\u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587`, percent: 10 });
+  const scoredPapers = await scorePapers(apiKey, model, allPapers, language, onProgress);
+  if (scoredPapers.length === 0) {
+    throw new Error("\u8BBA\u6587\u8BC4\u5206\u5931\u8D25");
+  }
+  onProgress == null ? void 0 : onProgress({ step: "score", message: `\u5DF2\u8BC4\u5206 ${scoredPapers.length} \u7BC7\u8BBA\u6587`, percent: 85 });
+  if (usePaSaCrawler) {
+    const topForCrawl = scoredPapers.slice(0, Math.min(topN * 2, scoredPapers.length));
+    const topPaperObjects = topForCrawl.map((sp) => allPapers.find((p) => p.id === sp.id)).filter((p) => !!p);
+    const crawledPapers = await crawlReferences(
+      apiKey,
+      model,
+      topPaperObjects,
+      maxResultsPerDirection,
+      startDate,
+      endDate,
+      onProgress
+    );
+    if (crawledPapers.length > 0) {
+      const crawledScored = await scorePapers(apiKey, model, crawledPapers, language, onProgress);
+      allPapers.push(...crawledPapers);
+      scoredPapers.push(...crawledScored);
+      scoredPapers.sort((a, b) => b.score - a.score);
+      onProgress == null ? void 0 : onProgress({ step: "crawl", message: `\u6269\u5C55\u540E\u5171 ${allPapers.length} \u7BC7\u8BBA\u6587`, percent: 90 });
+    }
+  }
+  const scoredMap = /* @__PURE__ */ new Map();
+  const paperMap = /* @__PURE__ */ new Map();
+  for (const sp of scoredPapers)
+    scoredMap.set(sp.id, sp);
+  for (const p of allPapers)
+    paperMap.set(p.id, p);
+  const topPapers = [];
+  for (const sp of scoredPapers.slice(0, topN)) {
+    const paper = paperMap.get(sp.id);
+    if (paper)
+      topPapers.push(paper);
+  }
+  const summaries = await summarizePapers(apiKey, model, topPapers, language, onProgress);
+  const enrichedSummaries = summaries.map((s) => {
+    var _a, _b;
+    const scored = scoredMap.get(s.id);
+    return {
+      ...s,
+      score: (_a = scored == null ? void 0 : scored.score) != null ? _a : 0,
+      reason: (_b = scored == null ? void 0 : scored.reason) != null ? _b : ""
+    };
+  });
+  onProgress == null ? void 0 : onProgress({ step: "done", message: "\u2705 \u5B8C\u6210\uFF01", percent: 100 });
+  return {
+    allPapers,
+    topPapers,
+    scoredPapers,
+    summaries: enrichedSummaries
+  };
+}
 
 // src/main.ts
 var GITHUB_REPO = "JettyCoffee/DailyArticle";
@@ -707,6 +1033,8 @@ var DailyArticlePlugin = class extends import_obsidian4.Plugin {
     super(...arguments);
     this.lastFetchDate = "";
     this.isFetching = false;
+    /** Callback for UI to receive progress updates during fetch */
+    this.onProgress = null;
   }
   async onload() {
     try {
@@ -823,13 +1151,14 @@ var DailyArticlePlugin = class extends import_obsidian4.Plugin {
     }
   }
   /**
-   * Fetch papers and generate a report.
+   * Fetch papers and generate a report using the OrchestratorAgent.
    * @param startDate - optional: start of date range for paper search
    * @param endDate - optional: end of date range for paper search
    * @param specificDirections - optional: only search these specific directions (default: all)
    * @returns true if the report was generated successfully
    */
   async fetchAndProcess(startDate, endDate, specificDirections) {
+    var _a;
     if (this.isFetching) {
       new import_obsidian4.Notice("\u23F3 \u6B63\u5728\u5904\u7406\u4E2D\uFF0C\u8BF7\u7A0D\u5019...");
       return false;
@@ -844,101 +1173,59 @@ var DailyArticlePlugin = class extends import_obsidian4.Plugin {
       return false;
     }
     this.isFetching = true;
-    new import_obsidian4.Notice("\u{1F916} Agent \u6B63\u5728\u5206\u6790\u7814\u7A76\u65B9\u5411\u5E76\u751F\u6210\u641C\u7D22\u67E5\u8BE2...");
     try {
-      let queries;
-      try {
-        queries = await expandSearchQueries(
-          this.settings.deepseekApiKey,
-          this.settings.model,
-          directions
-        );
-        new import_obsidian4.Notice(`\u{1F50D} Agent \u5DF2\u751F\u6210 ${queries.length} \u6761\u641C\u7D22\u67E5\u8BE2\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
-      } catch (e) {
-        console.warn("Query expansion failed, using raw directions:", e);
-        queries = directions.map((d) => `all:${d}`);
-        new import_obsidian4.Notice(`\u{1F50D} \u76F4\u63A5\u641C\u7D22 ${queries.length} \u4E2A\u65B9\u5411\uFF0C\u6B63\u5728\u83B7\u53D6\u8BBA\u6587...`);
-      }
-      let allPapers = await fetchPapersByQueries(
-        queries,
-        this.settings.maxResultsPerDirection,
+      const result = await orchestrate({
+        apiKey: this.settings.deepseekApiKey,
+        model: this.settings.model,
+        directions,
+        maxResultsPerDirection: this.settings.maxResultsPerDirection,
+        topN: this.settings.topN,
+        language: this.settings.outputLanguage,
         startDate,
-        endDate
-      );
-      if (allPapers.length === 0) {
-        console.warn("Generated queries returned no papers, retrying with raw direction queries");
-        const fallbackQueries = directions.map((d) => `all:${d}`);
-        allPapers = await fetchPapersByQueries(
-          fallbackQueries,
-          this.settings.maxResultsPerDirection,
-          startDate,
-          endDate
-        );
-        if (allPapers.length > 0) {
-          new import_obsidian4.Notice(`\u{1F50D} \u4F7F\u7528\u7814\u7A76\u65B9\u5411\u540D\u76F4\u63A5\u641C\u7D22\uFF0C\u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587`);
+        endDate,
+        usePaSaCrawler: this.settings.usePaSaCrawler,
+        crawlerDepth: this.settings.crawlerDepth,
+        onProgress: (info) => {
+          var _a2;
+          (_a2 = this.onProgress) == null ? void 0 : _a2.call(this, info);
         }
-      }
-      if (allPapers.length === 0) {
-        new import_obsidian4.Notice("\u26A0\uFE0F \u8BE5\u65E5\u671F\u6682\u65E0\u76F8\u5173\u8BBA\u6587");
-        return false;
-      }
-      new import_obsidian4.Notice(`\u{1F4DA} \u5DF2\u83B7\u53D6 ${allPapers.length} \u7BC7\u8BBA\u6587\uFF0C\u6B63\u5728\u8BC4\u5206...`);
-      const scoredPapers = await scorePapers(
-        this.settings.deepseekApiKey,
-        this.settings.model,
-        allPapers,
-        this.settings.outputLanguage
-      );
-      const topN = this.settings.topN;
+      });
       const scoredMap = /* @__PURE__ */ new Map();
-      const paperMap = /* @__PURE__ */ new Map();
-      for (const sp of scoredPapers) {
+      for (const sp of result.scoredPapers) {
         scoredMap.set(sp.id, sp);
       }
-      for (const p of allPapers) {
-        paperMap.set(p.id, p);
-      }
-      const topPapers = [];
-      for (const sp of scoredPapers.slice(0, topN)) {
-        const paper = paperMap.get(sp.id);
-        if (paper) {
-          topPapers.push(paper);
-        }
-      }
-      new import_obsidian4.Notice(`\u{1F4DD} \u6B63\u5728\u751F\u6210 Top ${topPapers.length} \u8BBA\u6587\u6458\u8981...`);
-      const summaries = await summarizePapers(
-        this.settings.deepseekApiKey,
-        this.settings.model,
-        topPapers,
-        this.settings.outputLanguage
-      );
-      const enrichedSummaries = summaries.map((s) => {
-        var _a, _b;
+      const enrichedSummaries = result.summaries.map((s) => {
+        var _a2, _b;
         const scored = scoredMap.get(s.id);
         return {
           ...s,
-          score: (_a = scored == null ? void 0 : scored.score) != null ? _a : 0,
+          score: (_a2 = scored == null ? void 0 : scored.score) != null ? _a2 : 0,
           reason: (_b = scored == null ? void 0 : scored.reason) != null ? _b : ""
         };
       });
       const markdown = generateMarkdown(
-        topPapers,
+        result.topPapers,
         enrichedSummaries,
-        allPapers.length,
+        result.allPapers.length,
         this.settings.outputLanguage,
         startDate
       );
       await this.writeOutputFile(markdown, startDate);
       new import_obsidian4.Notice(
-        `\u2705 \u65E5\u62A5\u5DF2\u751F\u6210\uFF01\u5171 ${allPapers.length} \u7BC7\uFF0C\u7CBE\u9009 Top ${topPapers.length}`
+        `\u2705 \u65E5\u62A5\u5DF2\u751F\u6210\uFF01\u5171 ${result.allPapers.length} \u7BC7\uFF0C\u7CBE\u9009 Top ${result.topPapers.length}`
       );
       return true;
     } catch (e) {
       console.error("DailyArticle fetch error:", e);
-      new import_obsidian4.Notice(`\u274C \u5904\u7406\u5931\u8D25: ${e.message}`);
+      new import_obsidian4.Notice(`\u274C \u5904\u7406\u5931\u8D25: e.message`);
       return false;
     } finally {
       this.isFetching = false;
+      (_a = this.onProgress) == null ? void 0 : _a.call(this, {
+        step: "done",
+        message: this.isFetching ? "\u5DF2\u53D6\u6D88" : "\u5C31\u7EEA",
+        percent: 100
+      });
     }
   }
   async writeOutputFile(content, date) {

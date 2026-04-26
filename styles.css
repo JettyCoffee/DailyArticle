@@ -3,17 +3,21 @@
    ============================================ */
 
 .daily-article-sidebar {
-  padding: 12px 16px 24px;
+  padding: 16px 16px 24px;
 }
 
 /* ---- Header ---- */
 
 .daily-article-sidebar .daily-article-header h2 {
-  margin: 0 0 16px 0;
-  font-size: 20px;
+  margin: 0 0 18px 0;
+  font-size: 22px;
   font-weight: 700;
   text-align: center;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  background: linear-gradient(135deg, var(--text-accent), var(--interactive-accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 /* ---- Cards ---- */
@@ -21,27 +25,34 @@
 .daily-article-sidebar .daily-article-card {
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 14px;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.daily-article-sidebar .daily-article-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
 }
 
 .daily-article-sidebar .daily-article-card h3 {
-  margin: 0 0 10px 0;
+  margin: 0 0 12px 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text-muted);
+  letter-spacing: 0.3px;
 }
 
 /* Card inner settings spacing */
 .daily-article-sidebar .daily-article-card .setting-item {
   border-top: none;
-  padding: 6px 0;
+  padding: 7px 0;
 }
 
 .daily-article-sidebar .daily-article-card .setting-item-info {
   flex: 0 0 auto;
-  min-width: 70px;
+  min-width: 72px;
 }
 
 .daily-article-sidebar .daily-article-card .setting-item-name {
@@ -53,53 +64,126 @@
   flex: 1 1 auto;
 }
 
-/* ----- Date Range ----- */
+/* ---- Date Range ---- */
 
 .daily-article-sidebar .daily-article-date-range {
-  margin-top: 6px;
-  padding: 8px 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
   background: var(--background-primary);
   border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
 }
 
 .daily-article-sidebar .daily-article-date-range .setting-item {
-  padding: 4px 0;
+  padding: 5px 0;
 }
 
 /* Custom date inputs */
 .daily-article-sidebar input[type="date"] {
   width: 100%;
+  font-size: 13px;
 }
 
-/* ---- Side-by-side row ---- */
+/* ---- Side-by-side row (responsive) ---- */
 
 .daily-article-sidebar .daily-article-setting-row {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .daily-article-sidebar .daily-article-setting-row .setting-item {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 120px;
+  min-width: 100px;
 }
 
 /* ---- Action button ---- */
 
 .daily-article-sidebar .daily-article-card .setting-item button {
   width: 100%;
-  padding: 10px 16px;
+  padding: 12px 16px;
   font-size: 14px;
   font-weight: 600;
+  border-radius: 8px;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.daily-article-sidebar .daily-article-card .setting-item button:active {
+  transform: scale(0.98);
+}
+
+.daily-article-sidebar .daily-article-card .setting-item button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ---- Spinner (inline loading indicator) ---- */
+
+.daily-article-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--text-on-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: da-spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes da-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Progress Bar ---- */
+
+.daily-article-sidebar .daily-article-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--background-primary);
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.daily-article-sidebar .daily-article-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.daily-article-sidebar .daily-article-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--interactive-accent);
+  transition: width 0.4s ease, background 0.3s ease;
+  min-width: 0;
+}
+
+.daily-article-sidebar .daily-article-progress-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- Status ---- */
 
 .daily-article-sidebar .daily-article-status {
-  margin-top: 10px;
+  margin-top: 8px;
   padding: 8px 12px;
-  background: var(--background-primary);
   border-radius: 8px;
   font-size: 13px;
   text-align: center;
   color: var(--text-muted);
+  background: transparent;
 }
