@@ -29,11 +29,16 @@ jobs:
       - name: Build plugin
         run: npm run build
 
+      - name: Stage release package
+        run: |
+          mkdir -p release/daily-article
+          cp main.js manifest.json styles.css release/daily-article/
+          cd release
+          zip -r daily-article.zip daily-article
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            main.js
-            manifest.json
-            styles.css
+            release/daily-article.zip
           generate_release_notes: true
