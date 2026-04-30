@@ -1,11 +1,13 @@
 # DailyArticle
 
 ![Obsidian Min App Version](https://img.shields.io/badge/Obsidian-v0.15.0+-blue?style=flat-square&logo=obsidian)
-![Version](https://img.shields.io/badge/version-1.0.0-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.3.0-success?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue?style=flat-square&logo=typescript)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-**DailyArticle** 是一款为 Obsidian 设计的插件。它每日自动从 Arxiv 获取最新论文，并通过 DeepSeek API 对其进行评分和排序，为您生成高质量的精选论文日报。
+**DailyArticle** 是一款为 Obsidian 设计的插件。能每日自动从 Arxiv 获取最新 AI 相关论文，并通过 DeepSeek 对其进行评分和排序，生成高质量的精选论文日报。
+
+![](./image/image1.png)
 
 ## Features
 
@@ -58,4 +60,4 @@ npm run build
 
 ## License
 
-本项目基于 [MIT License](LICENSE) 授权，更多信息请参阅 LICENSE 文件。
+本项目基于 MIT License 授权
