@@ -2,10 +2,8 @@ import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import DailyArticlePlugin from "./main";
 
 export const MODEL_OPTIONS: Record<string, string> = {
-  "deepseek-v4-flash": "DeepSeek V4 Flash (默认，快速经济)",
-  "deepseek-v4-pro": "DeepSeek V4 Pro（最强，更贵）",
-  "deepseek-chat": "deepseek-chat（旧版，2026-07-24 停用）",
-  "deepseek-reasoner": "deepseek-reasoner（旧版，2026-07-24 停用）",
+  "deepseek-v4-flash": "DeepSeek V4 Flash",
+  "deepseek-v4-pro": "DeepSeek V4 Pro",
 };
 
 export interface DailyArticleSettings {

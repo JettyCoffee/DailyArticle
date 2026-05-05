@@ -1,5 +1,12 @@
 import { requestUrl, Notice } from "obsidian";
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const ARXIV_DELAY_MS = 3500; // between requests to avoid 429
+const MAX_RETRIES = 3;
+
 export interface ArxivPaper {
   id: string;
   title: string;
@@ -109,12 +116,33 @@ async function queryArxiv(
   });
 
   const url = `https://export.arxiv.org/api/query?${params.toString()}`;
-  const response = await requestUrl({ url });
-  if (response.status >= 400) {
-    throw new Error(`Arxiv API error: ${response.status}`);
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const response = await requestUrl({ url });
+
+    if (response.status >= 500) {
+      throw new Error(`Arxiv API error: ${response.status}`);
+    }
+
+    if (response.status === 429) {
+      if (attempt < MAX_RETRIES) {
+        const backoff = ARXIV_DELAY_MS * Math.pow(2, attempt);
+        console.warn(`arXiv 429, retrying in ${backoff / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        await delay(backoff);
+        continue;
+      }
+      throw new Error("Arxiv API rate limited (429) after max retries");
+    }
+
+    if (response.status >= 400) {
+      throw new Error(`Arxiv API error: ${response.status}`);
+    }
+
+    const xml = response.text;
+    return parseAtomXml(xml);
   }
-  const xml = response.text;
-  return parseAtomXml(xml);
+
+  throw new Error("Arxiv API: unreachable");
 }
 
 /**
@@ -178,7 +206,8 @@ export async function fetchPapersByQueries(
   const seen = new Set<string>();
   const allPapers: ArxivPaper[] = [];
 
-  for (const query of queries) {
+  for (let i = 0; i < queries.length; i++) {
+    const query = queries[i];
     try {
       const papers = await fetchPapersByQuery(query, maxResultsPerQuery, startDate, endDate);
       for (const paper of papers) {
@@ -190,6 +219,11 @@ export async function fetchPapersByQueries(
     } catch (e) {
       console.error(`Failed to fetch query "${query.slice(0, 80)}":`, e);
       new Notice(`⚠️ arXiv 请求错误: ${(e as Error).message?.slice(0, 100)}`, 6000);
+    }
+
+    // respect arxiv rate limit between requests
+    if (i < queries.length - 1) {
+      await delay(ARXIV_DELAY_MS);
     }
   }
 
